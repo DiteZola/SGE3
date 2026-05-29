@@ -13402,5 +13402,1065 @@ console.log('   - Visível: Director, SubDir, Secretaria, Professor');
 <!-- ================================================
      FIM ESTATÍSTICAS POR ESCOLA
      ================================================ -->
+<!-- ================================================
+     PAUTAS COMPLETAS — Todas disciplinas vs Por disciplina
+     ================================================ -->
+<script>
+// =============================================
+// REESCREVER MÓDULO DE NOTAS/PAUTAS
+// =============================================
+S._routes['grades'] = function(){
+    const isProfessor = this.hasRole('professor');
+    
+    if(isProfessor){
+        this._pgGradesProfessor();
+    } else {
+        this._pgGradesDirector();
+    }
+};
+
+// =============================================
+// PAUTA DO DIRECTOR/SUBDIR/SECRETARIA
+// Todas disciplinas de uma vez
+// =============================================
+S._pgGradesDirector = function(){
+    if(!this.hasRole('diretor','subdiretor_pedagogico','secretaria','super_admin'))
+        return this.pgAccessDenied();
+
+    const pc = document.getElementById('pgC');
+    const tid = this.tid();
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Pautas — Todas as Disciplinas</h2>
+            <p class="tm fs-s">Pauta completa por classe e turma com todas as disciplinas</p></div>
+        </div>
+
+        <div class="cd mb-l">
+            <h3 class="fw7 fs-m mb-m"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#D4A017;font-size:1rem">filter_list</span>Seleccionar Pauta</h3>
+            <div class="g4">
+                <div class="fg"><label class="fl">Classe *</label>
+                    <select id="gd_cl" class="fs" onchange="S._gdLoadTurmas()">
+                        <option value="">— Seleccionar —</option>
+                        ${(this.school?this.clsFor(this.school.type):this.allCls()).map(c=>`<option value="${c}">${c}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="fg"><label class="fl">Turma *</label>
+                    <select id="gd_tm" class="fs"><option value="">— Seleccionar —</option></select>
+                </div>
+                <div class="fg"><label class="fl">Período *</label>
+                    <select id="gd_per" class="fs">
+                        <option value="1">1º Trimestre</option>
+                        <option value="2">2º Trimestre</option>
+                        <option value="3">3º Trimestre</option>
+                        <option value="anual">Anual (Resumo)</option>
+                    </select>
+                </div>
+                <div class="fg" style="display:flex;align-items:flex-end">
+                    <button class="btn btn-r" onclick="S._gdLoadPauta()" style="width:100%">
+                        <span class="material-icons-outlined">grading</span>Carregar
+                    </button>
+                </div>
+            </div>
+            <div style="display:flex;gap:5px;margin-top:8px">
+                <button class="btn btn-g btn-s" onclick="S._gdExportPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>Pauta PDF</button>
+                <button class="btn btn-o btn-s" onclick="S._gdExportXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+            </div>
+        </div>
+
+        <div id="gdArea"></div>
+    </div>`;
+};
+
+S._gdLoadTurmas = async function(){
+    const cl = document.getElementById('gd_cl')?.value;
+    const sel = document.getElementById('gd_tm');
+    if(!sel) return;
+    sel.innerHTML = '<option value="">Carregando...</option>';
+    if(!cl){ sel.innerHTML = '<option value="">—</option>'; return; }
+
+    const tid = this.tid();
+    try {
+        const turmas = await this._getTurmasByClass(tid, cl);
+        let opts = '<option value="">— Seleccionar —</option>';
+        if(turmas.length > 0){
+            turmas.forEach(t => { if(t.active !== false) opts += `<option value="${t.turma}">${t.turma} (${t.turno||''})</option>`; });
+        } else {
+            const studs = await this._getStudentsByClass(tid, cl);
+            const unique = new Set();
+            studs.forEach(s => { if(s.turma) unique.add(s.turma); });
+            unique.forEach(t => opts += `<option value="${t}">${t}</option>`);
+            if(unique.size === 0) opts += '<option value="A">A</option>';
+        }
+        sel.innerHTML = opts;
+    } catch(e){ sel.innerHTML = '<option value="A">A</option>'; }
+};
+
+// =============================================
+// CARREGAR PAUTA COMPLETA (todas disciplinas)
+// =============================================
+S._gdLoadPauta = async function(){
+    const tid = this.tid();
+    const cl = document.getElementById('gd_cl')?.value;
+    const tm = document.getElementById('gd_tm')?.value;
+    const per = document.getElementById('gd_per')?.value;
+    const area = document.getElementById('gdArea');
+
+    if(!cl) return this.toast('Seleccione a classe','error');
+    if(!tm) return this.toast('Seleccione a turma','error');
+
+    const mg = this.maxG(cl);
+    const pg = this.passG(cl);
+    const discs = this.DISC[cl] || [];
+    const isAnual = per === 'anual';
+
+    area.innerHTML = '<div class="fc" style="padding:24px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div><p class="tm mt-s fs-s">Carregando pauta completa...</p></div>';
+
+    try {
+        const students = await this._getStudentsByClassTurma(tid, cl, tm);
+        if(students.length === 0){
+            area.innerHTML = '<div class="cd tc" style="padding:30px"><p class="tm">Nenhum estudante nesta turma</p></div>';
+            return;
+        }
+
+        // Verificar trimestre aberto
+        let trimOpen = false;
+        if(!isAnual){
+            try { const ay = await this.getActiveYear(); trimOpen = ay?(ay[`trimestre${per}`]?.active===true):false; } catch(e){}
+        }
+
+        // Carregar TODAS as notas de TODOS os alunos
+        const allGrades = {};
+
+        for(const s of students){
+            allGrades[s.id] = {};
+            for(const disc of discs){
+                const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+                allGrades[s.id][disc] = {mac1:null,npt1:null,mt1:null,mac2:null,npt2:null,mt2:null,mac3:null,npt3:null,mt3:null,mf:null};
+
+                for(let t = 1; t <= 3; t++){
+                    try {
+                        const g = await db.collection('schools').doc(tid).collection('grades')
+                            .doc(`${s.id}_${t}_${dk}`).get();
+                        if(g.exists){
+                            const gd = g.data();
+                            allGrades[s.id][disc][`mac${t}`] = gd.mac;
+                            allGrades[s.id][disc][`npt${t}`] = gd.npt;
+                            allGrades[s.id][disc][`mt${t}`] = gd.mt;
+                        }
+                    } catch(e){}
+                }
+
+                // Calcular MF
+                const mts = [1,2,3].map(t => allGrades[s.id][disc][`mt${t}`]).filter(v => v !== null && v !== undefined);
+                if(mts.length > 0){
+                    allGrades[s.id][disc].mf = Math.round(mts.reduce((a,b)=>a+b,0)/mts.length);
+                }
+            }
+        }
+
+        // Guardar dados para export
+        S._gdData = {students, discs, allGrades, cl, tm, per, mg, pg, isAnual};
+
+        // ===== CONSTRUIR TABELA =====
+        let h = `<div class="cd p0" style="overflow:hidden">
+            <div style="padding:10px 12px;background:linear-gradient(135deg,#161616,#2D1515);color:#fff;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+                <div><strong>${cl} — Turma ${tm}</strong> | <span style="color:#D4A017">${isAnual?'Pauta Anual':per+'º Trimestre'}</span> | ${students.length} alunos</div>
+                <div style="font-size:.7rem;display:flex;gap:8px;align-items:center">
+                    <span>0–${mg}</span><span style="color:#059669">Pos ≥${pg}</span>
+                    ${!isAnual?`<span class="bg ${trimOpen?'bg-ok':'bg-er'}">${trimOpen?'Aberto':'Fechado'}</span>`:''}
+                </div>
+            </div>
+
+            <div style="overflow-x:auto;max-width:100%">
+                <table class="tbl" style="font-size:.65rem;min-width:${isAnual?900:700}px">
+                    <thead>
+                        <tr style="background:#1a1a1a">
+                            <th rowspan="2" style="width:25px;position:sticky;left:0;background:#1a1a1a;z-index:2">Nº</th>
+                            <th rowspan="2" style="min-width:120px;position:sticky;left:25px;background:#1a1a1a;z-index:2">Nome</th>`;
+
+        if(isAnual){
+            // Anual: Disciplina → MF de cada
+            discs.forEach(d => { h += `<th class="tc" style="font-size:.55rem;writing-mode:vertical-lr;height:80px;padding:4px 2px">${d}</th>`; });
+            h += `<th class="tc" style="background:#D4A017;color:#000">MG</th>
+                  <th class="tc" style="background:#D4A017;color:#000">%</th>
+                  <th class="tc" style="width:60px">Obs.</th>`;
+        } else {
+            // Trimestral: Disciplina → MAC, PT, MT
+            discs.forEach(d => {
+                h += `<th colspan="3" class="tc" style="font-size:.55rem;border-bottom:2px solid #D4A017">${d.substring(0,12)}</th>`;
+            });
+            h += `<th class="tc" style="background:#D4A017;color:#000">MG</th>
+                  <th class="tc" style="background:#D4A017;color:#000">%</th>
+                  <th class="tc" style="width:60px">Obs.</th>`;
+        }
+
+        h += '</tr>';
+
+        if(!isAnual){
+            h += '<tr>';
+            discs.forEach(() => {
+                h += `<th class="tc" style="font-size:.5rem;color:#D4A017">MAC</th>
+                      <th class="tc" style="font-size:.5rem;color:#D4A017">PT</th>
+                      <th class="tc" style="font-size:.5rem;color:#CC1B2B">MT</th>`;
+            });
+            h += '<th></th><th></th><th></th></tr>';
+        }
+
+        h += '</thead><tbody>';
+
+        // Linhas de alunos
+        students.forEach((s, idx) => {
+            const grades = allGrades[s.id];
+            let mgTotal = 0, mgCount = 0, negativas = 0;
+
+            h += `<tr>
+                <td class="fw7" style="position:sticky;left:0;background:#fff;z-index:1">${idx+1}</td>
+                <td class="fw7 fs-s" style="position:sticky;left:25px;background:#fff;z-index:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px">${s.name||''}</td>`;
+
+            if(isAnual){
+                discs.forEach(disc => {
+                    const g = grades[disc];
+                    const mf = g?.mf;
+                    if(mf !== null && mf !== undefined){
+                        const isNeg = mf < pg;
+                        mgTotal += mf; mgCount++;
+                        if(isNeg) negativas++;
+                        h += `<td class="tc fw7" style="color:${isNeg?'#DC2626':'#059669'};font-size:.7rem">${mf}</td>`;
+                    } else {
+                        h += '<td class="tc" style="color:#ccc;font-size:.65rem">—</td>';
+                    }
+                });
+            } else {
+                discs.forEach(disc => {
+                    const g = grades[disc];
+                    const mac = g?.[`mac${per}`];
+                    const npt = g?.[`npt${per}`];
+                    const mt = g?.[`mt${per}`];
+
+                    const printVal = (v) => {
+                        if(v === null || v === undefined) return '<td class="tc" style="color:#ddd;font-size:.6rem">—</td>';
+                        const isNeg = v < pg;
+                        return `<td class="tc fw7" style="color:${isNeg?'#DC2626':'#059669'};font-size:.65rem">${v}</td>`;
+                    };
+
+                    h += printVal(mac) + printVal(npt) + printVal(mt);
+
+                    if(mt !== null && mt !== undefined){
+                        mgTotal += mt; mgCount++;
+                        if(mt < pg) negativas++;
+                    }
+                });
+            }
+
+            // MG
+            const mg2 = mgCount > 0 ? Math.round(mgTotal / mgCount) : null;
+            const pct = mgCount > 0 && discs.length > 0 ? Math.round((mgCount - negativas) / mgCount * 100) : 0;
+
+            // Observação
+            let obs = '';
+            if(s.status === 'Transferido' || s.status === 'Transferida') obs = 'Transf.';
+            else if(s.status === 'Desistente') obs = 'Desist.';
+            else if(mg2 !== null) obs = mg2 >= pg ? this.gSt('Aprovado', s.sex) : this.gSt('Reprovado', s.sex);
+
+            const obsColor = obs.includes('Aprovad') ? '#059669' : obs.includes('Reprovad') ? '#DC2626' : obs.includes('Transf') ? '#F59E0B' : obs.includes('Desist') ? '#6B7280' : '#333';
+
+            if(mg2 !== null){
+                h += `<td class="tc fw8" style="color:${mg2>=pg?'#059669':'#DC2626'};font-size:.75rem;background:rgba(212,160,23,.05)">${mg2}</td>`;
+            } else {
+                h += '<td class="tc" style="color:#ccc">—</td>';
+            }
+            h += `<td class="tc fw7" style="font-size:.65rem">${pct}%</td>`;
+            h += `<td class="tc fw7" style="color:${obsColor};font-size:.6rem">${obs}</td>`;
+
+            h += '</tr>';
+        });
+
+        // Linha de resumo
+        let totalAppr = 0, totalFail = 0, totalEval = 0;
+        students.forEach(s => {
+            const grades = allGrades[s.id];
+            let t = 0, c = 0, neg = 0;
+            discs.forEach(disc => {
+                const g = grades[disc];
+                const val = isAnual ? g?.mf : g?.[`mt${per}`];
+                if(val !== null && val !== undefined){ t += val; c++; if(val < pg) neg++; }
+            });
+            if(c > 0){ totalEval++; if(Math.round(t/c) >= pg && neg <= 2) totalAppr++; else totalFail++; }
+        });
+
+        const totalCols = isAnual ? discs.length + 5 : discs.length * 3 + 5;
+        h += `<tr style="background:rgba(26,26,26,.95)">
+            <td colspan="2" style="color:#D4A017;font-weight:800;font-size:.7rem;position:sticky;left:0;background:rgba(26,26,26,.95);z-index:1">
+                RESUMO: ${students.length} mat. | ${totalEval} aval. | 
+                <span style="color:#059669">${totalAppr} aprov.</span> | 
+                <span style="color:#DC2626">${totalFail} repr.</span> | 
+                ${totalEval>0?Math.round(totalAppr/totalEval*100):0}%
+            </td>
+            <td colspan="${totalCols - 2}"></td>
+        </tr>`;
+
+        h += '</tbody></table></div></div>';
+        area.innerHTML = h;
+
+        this.toast(`Pauta carregada: ${students.length} alunos × ${discs.length} disciplinas`, 'info', 2000);
+
+    } catch(e){
+        console.error('Erro pauta:', e);
+        area.innerHTML = `<div class="cd tc" style="padding:20px"><p class="tr">${e.message}</p></div>`;
+    }
+};
+
+// =============================================
+// EXPORTAR PAUTA COMPLETA PDF
+// =============================================
+S._gdExportPDF = async function(){
+    const d = S._gdData;
+    if(!d) return this.toast('Carregue a pauta primeiro','warn');
+    const esc = this.school || {};
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('l','mm','a4');
+    const periodLabel = d.isAnual ? 'ANUAL' : `${d.per}º TRIMESTRE`;
+
+    // Cabeçalho
+    doc.setFontSize(10);doc.setFont('helvetica','bold');doc.setTextColor(0);
+    doc.text('REPÚBLICA DE ANGOLA',148,10,{align:'center'});
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text('MINISTÉRIO DA EDUCAÇÃO',148,14,{align:'center'});
+    doc.setFontSize(9);doc.setFont('helvetica','bold');
+    doc.text((esc.name||'').toUpperCase(),148,19,{align:'center'});
+    doc.setDrawColor(204,27,43);doc.setLineWidth(.4);doc.line(20,21,276,21);
+
+    doc.setFontSize(12);
+    doc.text(`PAUTA ${periodLabel} — ${d.cl} — Turma ${d.tm}`,148,28,{align:'center'});
+    doc.setFontSize(7);doc.setFont('helvetica','normal');
+    doc.text(`Notas: 0–${d.mg} | Positiva: ≥${d.pg} | ${d.students.length} alunos | ${d.discs.length} disciplinas`,148,32,{align:'center'});
+
+    // Construir dados da tabela
+    const head = ['Nº','Nome'];
+    if(d.isAnual){
+        d.discs.forEach(disc => head.push(disc.substring(0,8)));
+        head.push('MG','%','Obs.');
+    } else {
+        d.discs.forEach(disc => { head.push(disc.substring(0,6)+' MAC', disc.substring(0,6)+' PT', disc.substring(0,6)+' MT'); });
+        head.push('MG','%','Obs.');
+    }
+
+    const body = [];
+    d.students.forEach((s, idx) => {
+        const grades = d.allGrades[s.id];
+        const row = [idx+1, (s.name||'').substring(0,20)];
+        let mgT=0,mgC=0,neg=0;
+
+        if(d.isAnual){
+            d.discs.forEach(disc => {
+                const mf = grades[disc]?.mf;
+                if(mf!==null&&mf!==undefined){ row.push(mf); mgT+=mf; mgC++; if(mf<d.pg)neg++; }
+                else row.push('-');
+            });
+        } else {
+            d.discs.forEach(disc => {
+                const g = grades[disc];
+                row.push(g?.[`mac${d.per}`]??'-', g?.[`npt${d.per}`]??'-', g?.[`mt${d.per}`]??'-');
+                const mt = g?.[`mt${d.per}`];
+                if(mt!==null&&mt!==undefined){ mgT+=mt; mgC++; if(mt<d.pg)neg++; }
+            });
+        }
+
+        const mg2 = mgC>0?Math.round(mgT/mgC):'-';
+        const pct = mgC>0?Math.round((mgC-neg)/mgC*100)+'%':'';
+        let obs = '';
+        if(s.status==='Transferido'||s.status==='Transferida') obs='Transf.';
+        else if(s.status==='Desistente') obs='Desist.';
+        else if(mg2!=='-') obs=mg2>=d.pg?'Aprov.':'Repr.';
+
+        row.push(mg2, pct, obs);
+        body.push(row);
+    });
+
+    const colStyles = {0:{cellWidth:8},1:{halign:'left',cellWidth:25}};
+
+    doc.autoTable({
+        startY: 36,
+        head: [head],
+        body: body,
+        styles: {fontSize:5, cellPadding:1.5, halign:'center', font:'helvetica', overflow:'hidden'},
+        headStyles: {fillColor:[204,27,43], textColor:255, fontStyle:'bold', fontSize:4.5},
+        columnStyles: colStyles,
+        alternateRowStyles: {fillColor:[252,248,244]},
+        margin: {left:5, right:5},
+        didParseCell: function(data){
+            if(data.section==='body'){
+                const val = Number(data.cell.raw);
+                if(!isNaN(val) && data.column.index >= 2){
+                    if(val < d.pg) data.cell.styles.textColor = [220,38,38];
+                    else data.cell.styles.textColor = [5,150,105];
+                    data.cell.styles.fontStyle = 'bold';
+                }
+                // Obs coluna
+                const lastIdx = data.row.raw.length - 1;
+                if(data.column.index === lastIdx){
+                    if(String(data.cell.raw).includes('Aprov')) data.cell.styles.textColor=[5,150,105];
+                    if(String(data.cell.raw).includes('Repr')) data.cell.styles.textColor=[220,38,38];
+                    if(String(data.cell.raw).includes('Transf')) data.cell.styles.textColor=[217,119,6];
+                    if(String(data.cell.raw).includes('Desist')) data.cell.styles.textColor=[107,114,128];
+                }
+                if(data.cell.raw === '-') data.cell.styles.textColor = [200,200,200];
+            }
+        }
+    });
+
+    // Rodapé
+    const fy = doc.lastAutoTable.finalY + 8;
+    doc.setFontSize(7);doc.setFont('helvetica','normal');
+    doc.text('O(A) Professor(a):',10,fy);doc.line(10,fy+8,70,fy+8);
+    doc.text('O(A) Subdirector(a) Ped.:',100,fy);doc.line(100,fy+8,170,fy+8);
+    doc.text('O(A) Director(a):',200,fy);doc.line(200,fy+8,270,fy+8);
+
+    doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`,148,fy+14,{align:'center'});
+
+    await this.addQR(doc,`SGE|PAUTA|${d.cl}|${d.tm}|${periodLabel}`,260,fy,18);
+
+    doc.save(`Pauta_${d.cl}_${d.tm}_${periodLabel}.pdf`);
+    this.toast('Pauta PDF gerada!','success');
+};
+
+// XLSX
+S._gdExportXLSX = function(){
+    const d = S._gdData;
+    if(!d) return S.toast('Carregue primeiro','warn');
+    const periodLabel = d.isAnual?'Anual':`T${d.per}`;
+    const data = [];
+
+    d.students.forEach((s,idx) => {
+        const grades = d.allGrades[s.id];
+        const row = {'Nº':idx+1,'Nome':s.name,'Sexo':s.sex==='Feminino'?'F':'M'};
+        let mgT=0,mgC=0,neg=0;
+
+        d.discs.forEach(disc => {
+            const g = grades[disc];
+            if(d.isAnual){
+                row[disc+' MF'] = g?.mf ?? '';
+                if(g?.mf!=null){ mgT+=g.mf; mgC++; if(g.mf<d.pg)neg++; }
+            } else {
+                row[disc+' MAC'] = g?.[`mac${d.per}`] ?? '';
+                row[disc+' PT'] = g?.[`npt${d.per}`] ?? '';
+                row[disc+' MT'] = g?.[`mt${d.per}`] ?? '';
+                const mt = g?.[`mt${d.per}`];
+                if(mt!=null){ mgT+=mt; mgC++; if(mt<d.pg)neg++; }
+            }
+        });
+
+        row['MG'] = mgC>0?Math.round(mgT/mgC):'';
+        row['%'] = mgC>0?Math.round((mgC-neg)/mgC*100)+'%':'';
+        let obs='';
+        if(s.status==='Transferido'||s.status==='Transferida')obs='Transferido';
+        else if(s.status==='Desistente')obs='Desistente';
+        else if(row['MG']!=='')obs=row['MG']>=d.pg?'Aprovado':'Reprovado';
+        row['Observação']=obs;
+
+        data.push(row);
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `${d.cl}_${d.tm}_${periodLabel}`);
+    XLSX.writeFile(wb, `Pauta_${d.cl}_${d.tm}_${periodLabel}.xlsx`);
+    S.toast('XLSX exportado!','success');
+};
+
+// =============================================
+// PAUTA DO PROFESSOR (por disciplina)
+// =============================================
+S._pgGradesProfessor = function(){
+    const pc = document.getElementById('pgC');
+    const tid = this.tid();
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Lançar Notas</h2>
+            <p class="tm fs-s">Seleccione a turma e disciplina para lançar notas</p></div>
+        </div>
+
+        <div class="cd mb-l">
+            <div class="g4">
+                <div class="fg"><label class="fl">Classe *</label>
+                    <select id="gp_cl" class="fs" onchange="S._gpLoadTurmas();S._gpLoadDiscs()">
+                        <option value="">—</option>
+                        ${(this.school?this.clsFor(this.school.type):this.allCls()).map(c=>`<option value="${c}">${c}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="fg"><label class="fl">Turma *</label>
+                    <select id="gp_tm" class="fs"><option value="">—</option></select>
+                </div>
+                <div class="fg"><label class="fl">Trimestre *</label>
+                    <select id="gp_tr" class="fs"><option value="1">1º Trim.</option><option value="2">2º Trim.</option><option value="3">3º Trim.</option></select>
+                </div>
+                <div class="fg"><label class="fl">Disciplina *</label>
+                    <select id="gp_dc" class="fs"><option value="">—</option></select>
+                </div>
+            </div>
+            <button class="btn btn-r mt-s" onclick="S._gpLoadPauta()"><span class="material-icons-outlined">grading</span>Carregar</button>
+        </div>
+
+        <!-- Acesso rápido -->
+        <div id="gpQuick"></div>
+
+        <div id="gpArea"></div>
+    </div>`;
+
+    this._gpLoadQuick();
+};
+
+S._gpLoadTurmas = async function(){
+    const cl = document.getElementById('gp_cl')?.value;
+    const sel = document.getElementById('gp_tm');
+    if(!sel||!cl){ if(sel) sel.innerHTML='<option value="">—</option>'; return; }
+    const tid = this.tid();
+    try{
+        const turmas = await this._getTurmasByClass(tid,cl);
+        let opts='<option value="">—</option>';
+        turmas.forEach(t=>{if(t.active!==false)opts+=`<option value="${t.turma}">${t.turma}</option>`});
+        if(turmas.length===0){
+            const studs=await this._getStudentsByClass(tid,cl);
+            const u=new Set();studs.forEach(s=>{if(s.turma)u.add(s.turma)});
+            u.forEach(t=>opts+=`<option value="${t}">${t}</option>`);
+        }
+        sel.innerHTML=opts;
+    }catch(e){sel.innerHTML='<option value="A">A</option>'}
+};
+
+S._gpLoadDiscs = function(){
+    const cl=document.getElementById('gp_cl')?.value;
+    const sel=document.getElementById('gp_dc');
+    if(!sel)return;
+    sel.innerHTML=cl?this.discOpts(cl):'<option value="">—</option>';
+};
+
+S._gpLoadQuick = async function(){
+    const el=document.getElementById('gpQuick');if(!el)return;
+    const tid=this.tid();
+    try{
+        const snap=await db.collection('schools').doc(tid).collection('assignments')
+            .where('professorId','==',this.user.uid).get();
+        if(snap.empty)return;
+        let h='<div class="cd mb-l"><h3 class="fw7 fs-m mb-m">Minhas Atribuições — Acesso Rápido</h3><div class="g2">';
+        snap.forEach(d=>{const a=d.data();
+            h+=`<div class="cd" style="padding:10px;cursor:pointer;border-left:3px solid #D4A017;transition:transform .15s" 
+                onclick="document.getElementById('gp_cl').value='${a.classe}';S._gpLoadTurmas();S._gpLoadDiscs();setTimeout(()=>{document.getElementById('gp_tm').value='${a.turma}';document.getElementById('gp_dc').value='${a.disciplina}'},400)"
+                onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform=''">
+                <span class="fw7 fs-s">${a.classe} — Turma ${a.turma}</span><br><span class="tm fs-s">${a.disciplina}</span>
+            </div>`;
+        });
+        h+='</div></div>';
+        el.innerHTML=h;
+    }catch(e){}
+};
+
+// Carregar pauta por disciplina (professor)
+S._gpLoadPauta = async function(){
+    const tid=this.tid();
+    const cl=document.getElementById('gp_cl')?.value;
+    const tm=document.getElementById('gp_tm')?.value;
+    const tr=document.getElementById('gp_tr')?.value;
+    const dc=document.getElementById('gp_dc')?.value;
+    const area=document.getElementById('gpArea');
+
+    if(!cl||!tm||!dc) return this.toast('Seleccione classe, turma e disciplina','error');
+
+    const mg=this.maxG(cl),pg=this.passG(cl);
+    const dk=dc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+
+    area.innerHTML='<div class="fc" style="padding:20px"><div class="ld-spin" style="width:24px;height:24px;border-width:2px"></div></div>';
+
+    try{
+        const students=await this._getStudentsByClassTurma(tid,cl,tm);
+        if(!students.length){area.innerHTML='<div class="cd tc" style="padding:20px"><p class="tm">Sem alunos</p></div>';return}
+
+        let trimOpen=false;
+        try{const ay=await this.getActiveYear();trimOpen=ay?(ay[`trimestre${tr}`]?.active===true):false}catch(e){}
+
+        let h=`<div class="cd p0" style="overflow:hidden">
+            <div style="padding:10px 12px;background:linear-gradient(135deg,#161616,#2D1515);color:#fff;display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px">
+                <div><strong>${cl} — ${tm}</strong> | <span style="color:#D4A017">${dc}</span> | ${tr}º Trim.</div>
+                <div style="font-size:.7rem;display:flex;gap:6px"><span>0–${mg}</span><span style="color:#059669">≥${pg}</span>
+                <span class="bg ${trimOpen?'bg-ok':'bg-er'}">${trimOpen?'Aberto':'Fechado'}</span></div>
+            </div>
+            <div class="ovx"><table class="tbl"><thead><tr><th>Nº</th><th style="min-width:140px">Nome</th><th class="tc" style="width:70px">MAC</th><th class="tc" style="width:70px">NPT</th><th class="tc" style="width:70px">MT</th><th class="tc" style="width:80px">Result.</th></tr></thead><tbody>`;
+
+        students.forEach((s,idx)=>{
+            const ro=!trimOpen?'readonly disabled style="opacity:.5"':'';
+            h+=`<tr><td class="fw7">${idx+1}</td>
+                <td class="fw7 fs-s">${s.name||''}</td>
+                <td class="tc"><input type="number" min="0" max="${mg}" step="0.5" class="fi" style="width:60px;text-align:center;padding:4px 2px;font-weight:700" id="pm_${s.id}" onchange="S._gpCalc('${s.id}',${mg},${pg})" ${ro}></td>
+                <td class="tc"><input type="number" min="0" max="${mg}" step="0.5" class="fi" style="width:60px;text-align:center;padding:4px 2px;font-weight:700" id="pn_${s.id}" onchange="S._gpCalc('${s.id}',${mg},${pg})" ${ro}></td>
+                <td class="tc fw8" style="font-size:.95rem" id="pt_${s.id}">—</td>
+                <td class="tc" id="pr_${s.id}">—</td>
+            </tr>`;
+        });
+
+        h+='</tbody></table></div>';
+        if(trimOpen){
+            h+=`<div style="padding:10px;border-top:1px solid #E5E7EB;display:flex;justify-content:flex-end">
+                <button class="btn btn-gn" onclick="S._gpSave('${cl}','${tm}','${tr}','${dc}','${dk}')" id="gpSvBt"><span class="material-icons-outlined">save</span>Guardar Notas</button>
+            </div>`;
+        }
+        h+='</div>';
+        area.innerHTML=h;
+
+        // Carregar existentes
+        for(const s of students){
+            try{const g=await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${tr}_${dk}`).get();
+            if(g.exists){const gd=g.data();
+                if(gd.mac!=null)document.getElementById(`pm_${s.id}`).value=gd.mac;
+                if(gd.npt!=null)document.getElementById(`pn_${s.id}`).value=gd.npt;
+                this._gpCalc(s.id,mg,pg);
+            }}catch(e){}
+        }
+    }catch(e){area.innerHTML=`<p class="tr">${e.message}</p>`}
+};
+
+S._gpCalc = function(sid,mg,pg){
+    const mac=parseFloat(document.getElementById(`pm_${sid}`)?.value);
+    const npt=parseFloat(document.getElementById(`pn_${sid}`)?.value);
+    const mtEl=document.getElementById(`pt_${sid}`);
+    const resEl=document.getElementById(`pr_${sid}`);
+    if(isNaN(mac)||isNaN(npt)){if(mtEl)mtEl.textContent='—';if(resEl)resEl.innerHTML='—';return}
+    const mt=Math.round(((mac+npt)/2)*10)/10;
+    if(mtEl){mtEl.textContent=mt;mtEl.style.color=mt>=pg?'#059669':'#DC2626'}
+    if(resEl)resEl.innerHTML=`<span class="bg ${mt>=pg?'bg-ok':'bg-er'}" style="font-size:.62rem">${mt>=pg?'Pos':'Neg'}</span>`;
+};
+
+S._gpSave = async function(cl,tm,tr,dc,dk){
+    const tid=this.tid();const btn=document.getElementById('gpSvBt');
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:.85rem">hourglass_empty</span>Guardando...'}
+    try{
+        const students=await this._getStudentsByClassTurma(tid,cl,tm);
+        const batch=db.batch();let saved=0;const mg=this.maxG(cl);
+        students.forEach(s=>{
+            const mac=parseFloat(document.getElementById(`pm_${s.id}`)?.value);
+            const npt=parseFloat(document.getElementById(`pn_${s.id}`)?.value);
+            if(isNaN(mac)&&isNaN(npt))return;
+            const mt=(!isNaN(mac)&&!isNaN(npt))?Math.round(((mac+npt)/2)*10)/10:null;
+            batch.set(db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${tr}_${dk}`),{
+                studentId:s.id,studentName:s.name||'',studentSex:s.sex||'',
+                classe:cl,turma:tm,trimestre:tr,disciplina:dc,
+                mac:isNaN(mac)?null:mac,npt:isNaN(npt)?null:npt,mt,
+                schoolId:tid,updatedAt:firebase.firestore.FieldValue.serverTimestamp(),updatedBy:this.user.uid
+            },{merge:true});
+            saved++;
+        });
+        if(saved>0){await batch.commit();this.toast(`${saved} notas guardadas!`,'success')}
+        else this.toast('Nenhuma nota','warn');
+        if(btn){btn.disabled=false;btn.innerHTML='<span class="material-icons-outlined">save</span>Guardar Notas'}
+    }catch(e){if(btn){btn.disabled=false;btn.innerHTML='<span class="material-icons-outlined">save</span>Guardar'}this.toast(e.message,'error')}
+};
+
+console.log('✅ Pautas redesenhadas:');
+console.log('   Director/SubDir/Secretária: TODAS disciplinas ao mesmo tempo');
+console.log('   Professor: por disciplina individual');
+console.log('   Trimestral: MAC, PT, MT + MG + % + Obs');
+console.log('   Anual: MF por disciplina + MG + % + Obs');
+console.log('   PDF landscape + XLSX');
+</script>
+<!-- ================================================
+     FIM PAUTAS COMPLETAS
+     ================================================ -->
+<!-- ================================================
+     CORREÇÃO PAUTA — Fundo branco, Anual com MT1/MT2/MT3
+     ================================================ -->
+<script>
+// =============================================
+// REESCREVER CARREGAMENTO DA PAUTA
+// =============================================
+S._gdLoadPauta = async function(){
+    const tid = this.tid();
+    const cl = document.getElementById('gd_cl')?.value;
+    const tm = document.getElementById('gd_tm')?.value;
+    const per = document.getElementById('gd_per')?.value;
+    const area = document.getElementById('gdArea');
+
+    if(!cl) return this.toast('Seleccione a classe','error');
+    if(!tm) return this.toast('Seleccione a turma','error');
+
+    const mg = this.maxG(cl);
+    const pg = this.passG(cl);
+    const discs = this.DISC[cl] || [];
+    const isAnual = per === 'anual';
+
+    area.innerHTML = '<div class="fc" style="padding:24px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div><p class="tm mt-s fs-s">Carregando...</p></div>';
+
+    try {
+        const students = await this._getStudentsByClassTurma(tid, cl, tm);
+        if(!students.length){
+            area.innerHTML = '<div class="cd tc" style="padding:24px"><p class="tm">Nenhum estudante</p></div>';
+            return;
+        }
+
+        // Carregar TODAS as notas
+        const allGrades = {};
+        for(const s of students){
+            allGrades[s.id] = {};
+            for(const disc of discs){
+                const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+                allGrades[s.id][disc] = {mac1:null,npt1:null,mt1:null,mac2:null,npt2:null,mt2:null,mac3:null,npt3:null,mt3:null,mf:null};
+                for(let t=1;t<=3;t++){
+                    try{
+                        const g = await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${t}_${dk}`).get();
+                        if(g.exists){ const gd=g.data(); allGrades[s.id][disc][`mac${t}`]=gd.mac; allGrades[s.id][disc][`npt${t}`]=gd.npt; allGrades[s.id][disc][`mt${t}`]=gd.mt; }
+                    }catch(e){}
+                }
+                const mts=[1,2,3].map(t=>allGrades[s.id][disc][`mt${t}`]).filter(v=>v!==null&&v!==undefined);
+                if(mts.length>0) allGrades[s.id][disc].mf = Math.round(mts.reduce((a,b)=>a+b,0)/mts.length);
+            }
+        }
+
+        S._gdData = {students,discs,allGrades,cl,tm,per,mg,pg,isAnual};
+
+        // Verificar trimestre
+        let trimOpen = false;
+        if(!isAnual){ try{const ay=await this.getActiveYear();trimOpen=ay?(ay[`trimestre${per}`]?.active===true):false}catch(e){} }
+
+        // ===== CONSTRUIR TABELA =====
+        const periodLabel = isAnual ? 'Pauta Anual' : `${per}º Trimestre`;
+
+        let h = `<div class="cd p0" style="overflow:hidden">
+            <!-- Header -->
+            <div style="padding:10px 14px;background:#fff;border-bottom:2px solid #CC1B2B;display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;align-items:center">
+                <div>
+                    <span class="fw8" style="color:#CC1B2B">${cl} — Turma ${tm}</span>
+                    <span style="color:#D4A017;font-weight:700;margin-left:8px">${periodLabel}</span>
+                    <span class="tm fs-s" style="margin-left:8px">${students.length} alunos • ${discs.length} disciplinas</span>
+                </div>
+                <div style="font-size:.72rem;display:flex;gap:8px;align-items:center">
+                    <span>Notas: 0–${mg}</span>
+                    <span style="color:#059669;font-weight:600">Positiva: ≥${pg}</span>
+                    ${!isAnual?`<span class="bg ${trimOpen?'bg-ok':'bg-er'}">${trimOpen?'Aberto':'Fechado'}</span>`:''}
+                </div>
+            </div>
+
+            <div style="overflow-x:auto;max-width:100%">
+                <table style="width:100%;border-collapse:collapse;font-size:.68rem;min-width:${isAnual?800:700}px">`;
+
+        // ===== HEADER DA TABELA =====
+        if(isAnual){
+            // ANUAL: Disciplina → MT1, MT2, MT3 por cada + MG + % + Obs
+            h += `<thead>
+                <tr style="background:#f8f6f2;border-bottom:2px solid #D4A017">
+                    <th style="padding:6px 8px;text-align:left;font-weight:700;border-right:1px solid #eee;position:sticky;left:0;background:#f8f6f2;z-index:2;width:30px">Nº</th>
+                    <th style="padding:6px 8px;text-align:left;font-weight:700;border-right:2px solid #D4A017;position:sticky;left:30px;background:#f8f6f2;z-index:2;min-width:130px">Nome do Aluno</th>`;
+
+            discs.forEach(d => {
+                h += `<th colspan="3" style="padding:4px 2px;text-align:center;font-size:.58rem;border-right:1px solid #eee;border-bottom:1px solid #ddd;color:#333">${d.length>15?d.substring(0,13)+'..':d}</th>`;
+            });
+
+            h += `<th style="padding:4px;text-align:center;font-weight:800;color:#CC1B2B;border-left:2px solid #D4A017;width:35px">MG</th>
+                  <th style="padding:4px;text-align:center;font-weight:800;color:#CC1B2B;width:30px">%</th>
+                  <th style="padding:4px;text-align:center;font-weight:700;width:55px">Observação</th>
+                </tr>
+                <tr style="background:#faf9f7;border-bottom:1px solid #ddd">
+                    <th colspan="2" style="position:sticky;left:0;background:#faf9f7;z-index:2;border-right:2px solid #D4A017"></th>`;
+
+            discs.forEach(() => {
+                h += `<th style="padding:3px 1px;text-align:center;font-size:.52rem;color:#888;border-right:1px solid #f0f0f0">1ºT</th>
+                      <th style="padding:3px 1px;text-align:center;font-size:.52rem;color:#888">2ºT</th>
+                      <th style="padding:3px 1px;text-align:center;font-size:.52rem;color:#888;border-right:1px solid #eee">3ºT</th>`;
+            });
+
+            h += `<th style="border-left:2px solid #D4A017"></th><th></th><th></th></tr></thead>`;
+
+        } else {
+            // TRIMESTRAL: MAC, PT, MT por disciplina
+            h += `<thead>
+                <tr style="background:#f8f6f2;border-bottom:2px solid #D4A017">
+                    <th style="padding:6px 8px;text-align:left;font-weight:700;border-right:1px solid #eee;position:sticky;left:0;background:#f8f6f2;z-index:2;width:30px">Nº</th>
+                    <th style="padding:6px 8px;text-align:left;font-weight:700;border-right:2px solid #D4A017;position:sticky;left:30px;background:#f8f6f2;z-index:2;min-width:130px">Nome do Aluno</th>`;
+
+            discs.forEach(d => {
+                h += `<th colspan="3" style="padding:4px 2px;text-align:center;font-size:.58rem;border-right:1px solid #eee;color:#333">${d.length>12?d.substring(0,10)+'..':d}</th>`;
+            });
+
+            h += `<th style="padding:4px;text-align:center;font-weight:800;color:#CC1B2B;border-left:2px solid #D4A017;width:35px">MG</th>
+                  <th style="padding:4px;text-align:center;font-weight:800;color:#CC1B2B;width:30px">%</th>
+                  <th style="padding:4px;text-align:center;font-weight:700;width:55px">Observação</th>
+                </tr>
+                <tr style="background:#faf9f7;border-bottom:1px solid #ddd">
+                    <th colspan="2" style="position:sticky;left:0;background:#faf9f7;z-index:2;border-right:2px solid #D4A017"></th>`;
+
+            discs.forEach(() => {
+                h += `<th style="padding:3px 1px;text-align:center;font-size:.52rem;color:#D4A017;font-weight:700">MAC</th>
+                      <th style="padding:3px 1px;text-align:center;font-size:.52rem;color:#D4A017;font-weight:700">PT</th>
+                      <th style="padding:3px 1px;text-align:center;font-size:.52rem;color:#CC1B2B;font-weight:700;border-right:1px solid #eee">MT</th>`;
+            });
+
+            h += `<th style="border-left:2px solid #D4A017"></th><th></th><th></th></tr></thead>`;
+        }
+
+        // ===== LINHAS DE ALUNOS =====
+        h += '<tbody>';
+
+        let totalAppr=0, totalFail=0, totalEval=0;
+
+        students.forEach((s, idx) => {
+            const grades = allGrades[s.id];
+            let mgTotal=0, mgCount=0, negativas=0;
+            const rowBg = idx%2===0 ? '#fff' : '#fdfcfa';
+
+            h += `<tr style="background:${rowBg};border-bottom:1px solid #f0eeec">
+                <td style="padding:5px 8px;font-weight:700;position:sticky;left:0;background:${rowBg};z-index:1;border-right:1px solid #eee;font-size:.7rem">${idx+1}</td>
+                <td style="padding:5px 8px;font-weight:600;position:sticky;left:30px;background:${rowBg};z-index:1;border-right:2px solid #D4A017;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;font-size:.72rem">${s.name||''}</td>`;
+
+            if(isAnual){
+                // ANUAL: mostrar MT1, MT2, MT3 por disciplina
+                discs.forEach(disc => {
+                    const g = grades[disc];
+                    [1,2,3].forEach(t => {
+                        const mt = g?.[`mt${t}`];
+                        if(mt !== null && mt !== undefined){
+                            const rounded = Math.round(mt);
+                            const isNeg = rounded < pg;
+                            h += `<td style="padding:3px 2px;text-align:center;font-weight:700;font-size:.68rem;color:${isNeg?'#DC2626':'#059669'};border-right:${t===3?'1px solid #eee':'none'}">${rounded}</td>`;
+                        } else {
+                            h += `<td style="padding:3px 2px;text-align:center;color:#ddd;font-size:.6rem;border-right:${t===3?'1px solid #eee':'none'}">—</td>`;
+                        }
+                    });
+
+                    // Para MG: usar MF (média final da disciplina)
+                    if(g?.mf !== null && g?.mf !== undefined){
+                        mgTotal += g.mf;
+                        mgCount++;
+                        if(g.mf < pg) negativas++;
+                    }
+                });
+            } else {
+                // TRIMESTRAL: MAC, PT, MT
+                discs.forEach(disc => {
+                    const g = grades[disc];
+                    const mac = g?.[`mac${per}`];
+                    const npt = g?.[`npt${per}`];
+                    const mt = g?.[`mt${per}`];
+
+                    const cellNote = (v, border) => {
+                        if(v===null||v===undefined) return `<td style="padding:3px 2px;text-align:center;color:#ddd;font-size:.6rem;${border?'border-right:1px solid #eee':''}">—</td>`;
+                        const rounded = Math.round(Number(v)*10)/10;
+                        const isNeg = rounded < pg;
+                        return `<td style="padding:3px 2px;text-align:center;font-weight:700;font-size:.68rem;color:${isNeg?'#DC2626':'#059669'};${border?'border-right:1px solid #eee':''}">${rounded}</td>`;
+                    };
+
+                    h += cellNote(mac, false);
+                    h += cellNote(npt, false);
+                    h += cellNote(mt, true);
+
+                    if(mt !== null && mt !== undefined){
+                        mgTotal += mt;
+                        mgCount++;
+                        if(mt < pg) negativas++;
+                    }
+                });
+            }
+
+            // MG = soma de todas as notas ÷ número de disciplinas com nota
+            const mgVal = mgCount > 0 ? Math.round(mgTotal / mgCount) : null;
+
+            // % = relação com média geral (positivas / total avaliadas)
+            const pctPositivas = mgCount > 0 ? Math.round((mgCount - negativas) / mgCount * 100) : 0;
+
+            // Observação
+            let obs = '';
+            let obsColor = '#333';
+            if(s.status === 'Transferido' || s.status === 'Transferida'){ obs = 'Transf.'; obsColor = '#F59E0B'; }
+            else if(s.status === 'Desistente'){ obs = 'Desist.'; obsColor = '#6B7280'; }
+            else if(mgVal !== null){
+                if(mgVal >= pg){ obs = this.gSt('Aprovado', s.sex); obsColor = '#059669'; totalAppr++; }
+                else { obs = this.gSt('Reprovado', s.sex); obsColor = '#DC2626'; totalFail++; }
+                totalEval++;
+            }
+
+            // Células MG, %, Obs
+            h += `<td style="padding:3px 4px;text-align:center;font-weight:800;font-size:.78rem;border-left:2px solid #D4A017;color:${mgVal!==null?(mgVal>=pg?'#059669':'#DC2626'):'#ccc'}">${mgVal!==null?mgVal:'—'}</td>`;
+            h += `<td style="padding:3px 4px;text-align:center;font-weight:700;font-size:.68rem;color:${pctPositivas>=60?'#059669':'#DC2626'}">${mgCount>0?pctPositivas+'%':'—'}</td>`;
+            h += `<td style="padding:3px 4px;text-align:center;font-weight:700;font-size:.6rem;color:${obsColor}">${obs}</td>`;
+
+            h += '</tr>';
+        });
+
+        // ===== LINHA RESUMO =====
+        const totalPct = totalEval > 0 ? Math.round(totalAppr/totalEval*100) : 0;
+        const totalCols = isAnual ? discs.length*3 + 5 : discs.length*3 + 5;
+
+        h += `<tr style="background:#f8f6f2;border-top:2px solid #D4A017">
+            <td colspan="2" style="padding:8px;font-weight:800;font-size:.72rem;position:sticky;left:0;background:#f8f6f2;z-index:1;border-right:2px solid #D4A017;color:#333">
+                RESUMO: ${students.length} matric. | ${totalEval} aval. |
+                <span style="color:#059669">${totalAppr} aprov.</span> |
+                <span style="color:#DC2626">${totalFail} repr.</span> |
+                <span style="color:${totalPct>=60?'#059669':'#DC2626'};font-weight:900">${totalPct}%</span>
+            </td>
+            <td colspan="${totalCols-2}" style="background:#f8f6f2"></td>
+        </tr>`;
+
+        h += '</tbody></table></div></div>';
+        area.innerHTML = h;
+
+        this.toast(`Pauta: ${students.length} alunos × ${discs.length} disc.`,'info',2000);
+
+    } catch(e){
+        console.error('Erro pauta:', e);
+        area.innerHTML = `<div class="cd tc" style="padding:20px"><p class="tr">${e.message}</p></div>`;
+    }
+};
+
+// =============================================
+// PDF — Fundo branco, cores nas notas
+// =============================================
+S._gdExportPDF = async function(){
+    const d = S._gdData;
+    if(!d) return this.toast('Carregue a pauta','warn');
+    const esc = this.school || {};
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('l','mm','a4');
+    const periodLabel = d.isAnual ? 'ANUAL' : `${d.per}º TRIMESTRE`;
+
+    // Cabeçalho sem fundo preto
+    doc.setFontSize(10);doc.setFont('helvetica','bold');doc.setTextColor(0);
+    doc.text('REPÚBLICA DE ANGOLA',148,10,{align:'center'});
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text('MINISTÉRIO DA EDUCAÇÃO',148,14,{align:'center'});
+    doc.setFontSize(9);doc.setFont('helvetica','bold');
+    doc.text((esc.name||'').toUpperCase(),148,19,{align:'center'});
+    doc.setFontSize(7);doc.setFont('helvetica','normal');
+    doc.text(`${esc.province||''} — ${esc.municipality||''} — Tel: ${esc.phone1||''}`,148,23,{align:'center'});
+
+    // Linhas decorativas (sem fundo preto)
+    doc.setDrawColor(204,27,43);doc.setLineWidth(.5);doc.line(20,25,276,25);
+    doc.setDrawColor(212,160,23);doc.setLineWidth(.3);doc.line(20,26,276,26);
+
+    doc.setFontSize(12);doc.setFont('helvetica','bold');
+    doc.text(`PAUTA ${periodLabel}`,148,32,{align:'center'});
+
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text(`Classe: ${d.cl} | Turma: ${d.tm} | Notas: 0–${d.mg} | Positiva: ≥${d.pg} | ${d.students.length} alunos | ${d.discs.length} disciplinas`,148,37,{align:'center'});
+
+    // Construir dados
+    const head = ['Nº','Nome'];
+
+    if(d.isAnual){
+        d.discs.forEach(disc => { head.push(disc.substring(0,6)+' T1'); head.push(disc.substring(0,6)+' T2'); head.push(disc.substring(0,6)+' T3'); });
+    } else {
+        d.discs.forEach(disc => { head.push(disc.substring(0,5)+' MC'); head.push(disc.substring(0,5)+' PT'); head.push(disc.substring(0,5)+' MT'); });
+    }
+    head.push('MG','%','Obs.');
+
+    const body = [];
+    d.students.forEach((s,idx) => {
+        const grades = d.allGrades[s.id];
+        const row = [idx+1, (s.name||'').substring(0,18)];
+        let mgT=0, mgC=0, neg=0;
+
+        d.discs.forEach(disc => {
+            const g = grades[disc];
+            if(d.isAnual){
+                [1,2,3].forEach(t => {
+                    const mt = g?.[`mt${t}`];
+                    if(mt!==null&&mt!==undefined){ row.push(Math.round(mt)); }
+                    else row.push('-');
+                });
+                if(g?.mf!==null&&g?.mf!==undefined){ mgT+=g.mf; mgC++; if(g.mf<d.pg)neg++; }
+            } else {
+                row.push(g?.[`mac${d.per}`]??'-');
+                row.push(g?.[`npt${d.per}`]??'-');
+                const mt=g?.[`mt${d.per}`];
+                row.push(mt!==null&&mt!==undefined?Math.round(mt*10)/10:'-');
+                if(mt!==null&&mt!==undefined){ mgT+=mt; mgC++; if(mt<d.pg)neg++; }
+            }
+        });
+
+        const mgVal = mgC>0?Math.round(mgT/mgC):'-';
+        const pct = mgC>0?Math.round((mgC-neg)/mgC*100)+'%':'';
+        let obs='';
+        if(s.status==='Transferido'||s.status==='Transferida') obs='Transf.';
+        else if(s.status==='Desistente') obs='Desist.';
+        else if(mgVal!=='-') obs=mgVal>=d.pg?'Aprov.':'Repr.';
+
+        row.push(mgVal, pct, obs);
+        body.push(row);
+    });
+
+    doc.autoTable({
+        startY: 41,
+        head: [head],
+        body: body,
+        styles: {
+            fontSize: 4.8,
+            cellPadding: 1.5,
+            halign: 'center',
+            font: 'helvetica',
+            lineColor: [220,220,220],
+            lineWidth: 0.1
+        },
+        headStyles: {
+            fillColor: [248,246,242],
+            textColor: [60,60,60],
+            fontStyle: 'bold',
+            fontSize: 4,
+            lineColor: [200,200,200],
+            lineWidth: 0.2
+        },
+        columnStyles: {
+            0: {cellWidth:7},
+            1: {halign:'left', cellWidth:22}
+        },
+        alternateRowStyles: {fillColor: [254,253,250]},
+        margin: {left:4, right:4},
+        didParseCell: function(data){
+            if(data.section === 'body'){
+                const val = Number(data.cell.raw);
+                if(!isNaN(val) && data.column.index >= 2){
+                    data.cell.styles.fontStyle = 'bold';
+                    if(val < d.pg) data.cell.styles.textColor = [220,38,38];
+                    else data.cell.styles.textColor = [5,130,90];
+                }
+                if(data.cell.raw === '-') data.cell.styles.textColor = [210,210,210];
+
+                // Obs
+                const lastIdx = data.row.raw.length - 1;
+                if(data.column.index === lastIdx){
+                    data.cell.styles.fontStyle = 'bold';
+                    if(String(data.cell.raw).includes('Aprov')) data.cell.styles.textColor=[5,130,90];
+                    if(String(data.cell.raw).includes('Repr')) data.cell.styles.textColor=[220,38,38];
+                    if(String(data.cell.raw).includes('Transf')) data.cell.styles.textColor=[217,119,6];
+                    if(String(data.cell.raw).includes('Desist')) data.cell.styles.textColor=[107,114,128];
+                }
+
+                // MG column
+                const mgIdx = data.row.raw.length - 3;
+                if(data.column.index === mgIdx && !isNaN(val)){
+                    data.cell.styles.fontStyle = 'bold';
+                    data.cell.styles.fontSize = 5.5;
+                }
+            }
+        }
+    });
+
+    // Rodapé
+    const fy = doc.lastAutoTable.finalY + 6;
+    doc.setFontSize(7);doc.setFont('helvetica','normal');doc.setTextColor(0);
+
+    doc.text('O(A) Professor(a):',8,fy);doc.line(8,fy+7,65,fy+7);
+    doc.text('O(A) Subdirector(a) Pedagógico(a):',95,fy);doc.line(95,fy+7,175,fy+7);
+    doc.text('O(A) Director(a) Geral:',200,fy);doc.line(200,fy+7,268,fy+7);
+
+    doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`,148,fy+13,{align:'center'});
+
+    await this.addQR(doc,`SGE|PAUTA|${d.cl}|${d.tm}|${periodLabel}|${esc.name||''}`,258,fy-2,16);
+
+    doc.save(`Pauta_${d.cl}_${d.tm}_${periodLabel}.pdf`);
+    this.toast('Pauta PDF gerada!','success');
+};
+
+console.log('✅ Pauta corrigida: fundo branco, anual com MT1/MT2/MT3, % correcta');
+</script>
+<!-- ================================================
+     FIM CORREÇÃO PAUTA
+     ================================================ -->
 </body>
 </html>
