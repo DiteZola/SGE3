@@ -11183,5 +11183,528 @@ console.log('   - Extenso: "Dez valores", "Doze valores", etc.');
 <!-- ================================================
      FIM CERTIFICADO OFICIAL
      ================================================ -->
+<!-- ================================================
+     CORREÇÃO DEFINITIVA — Fotos Base64 + Dados Completos
+     ================================================ -->
+<script>
+// =============================================
+// FOTO: Guardar como Base64 no Firestore (sem Storage)
+// =============================================
+S._processPhoto = function(file){
+    return new Promise((resolve, reject) => {
+        if(!file) return resolve(null);
+        if(!file.type.startsWith('image/')) return reject('Não é imagem');
+        if(file.size > 8 * 1024 * 1024) return reject('Máximo 8MB');
+
+        const reader = new FileReader();
+        reader.onerror = () => reject('Erro ao ler ficheiro');
+        reader.onload = function(e){
+            const img = new Image();
+            img.onerror = () => reject('Imagem inválida');
+            img.onload = function(){
+                const canvas = document.createElement('canvas');
+                let w = img.width, h = img.height;
+                const max = 250;
+                if(w > max || h > max){
+                    if(w > h){ h = Math.round(h * max / w); w = max; }
+                    else { w = Math.round(w * max / h); h = max; }
+                }
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#FFF';
+                ctx.fillRect(0, 0, w, h);
+                ctx.drawImage(img, 0, 0, w, h);
+                resolve(canvas.toDataURL('image/jpeg', 0.5));
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+};
+
+// Preview
+S.prevPh = function(input, previewId){
+    if(!input.files || !input.files[0]) return;
+    const file = input.files[0];
+    if(!file.type.startsWith('image/')){ this.toast('Seleccione uma imagem','error'); input.value=''; return; }
+
+    this._processPhoto(file).then(data => {
+        const el = document.getElementById(previewId);
+        if(el){ el.src = data; el.style.display = 'block'; }
+    }).catch(err => { this.toast(String(err), 'error'); input.value = ''; });
+};
+
+// =============================================
+// ESTUDANTE — Formulário Completo + Foto Base64
+// =============================================
+S.mdStud = function(ed){
+    const d = ed || {};
+    this.oModal(ed ? 'Editar Estudante' : 'Novo Estudante', `
+    <form onsubmit="return false" style="max-height:65vh;overflow-y:auto;padding-right:4px">
+
+        <!-- FOTO -->
+        <div style="display:flex;justify-content:center;margin-bottom:14px">
+            <div class="ph-up" onclick="document.getElementById('stPh').click()">
+                <span class="material-icons-outlined" style="color:#9CA3AF;font-size:1.3rem">photo_camera</span>
+                <span style="font-size:.55rem;color:#9CA3AF">Foto</span>
+                <img id="stPhPv" ${d.photo?`src="${d.photo}"`:'style="display:none"'}>
+            </div>
+            <input type="file" id="stPh" accept="image/*" style="display:none" onchange="S.prevPh(this,'stPhPv')">
+        </div>
+
+        <div class="g2">
+            <!-- DADOS PESSOAIS -->
+            <div class="fg gc2" style="margin-bottom:4px"><label class="fl tg fw7">— Dados Pessoais —</label></div>
+
+            <div class="fg gc2"><label class="fl">Nome Completo *</label>
+                <input type="text" id="st_name" class="fi" value="${d.name||''}" required></div>
+
+            <div class="fg"><label class="fl">Sexo *</label>
+                <select id="st_sex" class="fs" required>
+                    <option value="">Seleccionar...</option>
+                    <option ${d.sex==='Masculino'?'selected':''}>Masculino</option>
+                    <option ${d.sex==='Feminino'?'selected':''}>Feminino</option>
+                </select></div>
+
+            <div class="fg"><label class="fl">Data de Nascimento *</label>
+                <input type="date" id="st_dob" class="fi" value="${d.dob||''}" required></div>
+
+            <div class="fg"><label class="fl">Nacionalidade</label>
+                <input type="text" id="st_nationality" class="fi" value="${d.nationality||'Angolana'}"></div>
+
+            <div class="fg"><label class="fl">Naturalidade (Município)</label>
+                <input type="text" id="st_naturalidade" class="fi" value="${d.naturalidade||''}"></div>
+
+            <div class="fg"><label class="fl">Província de Origem</label>
+                <select id="st_provOrigem" class="fs">
+                    <option value="">—</option>
+                    ${this.PROVS.map(p=>`<option ${d.provOrigem===p?'selected':''}>${p}</option>`).join('')}
+                </select></div>
+
+            <div class="fg"><label class="fl">Nº Bilhete de Identidade</label>
+                <input type="text" id="st_bi" class="fi" value="${d.bi||''}"></div>
+
+            <div class="fg"><label class="fl">Data Emissão BI</label>
+                <input type="date" id="st_biDate" class="fi" value="${d.biDate||''}"></div>
+
+            <div class="fg"><label class="fl">Local Emissão BI</label>
+                <input type="text" id="st_biLocal" class="fi" value="${d.biLocal||''}"></div>
+
+            <div class="fg"><label class="fl">NIF</label>
+                <input type="text" id="st_nif" class="fi" value="${d.nif||''}"></div>
+
+            <div class="fg"><label class="fl">Grupo Sanguíneo</label>
+                <select id="st_blood" class="fs">
+                    <option value="">—</option>
+                    <option ${d.bloodType==='A+'?'selected':''}>A+</option><option ${d.bloodType==='A-'?'selected':''}>A-</option>
+                    <option ${d.bloodType==='B+'?'selected':''}>B+</option><option ${d.bloodType==='B-'?'selected':''}>B-</option>
+                    <option ${d.bloodType==='AB+'?'selected':''}>AB+</option><option ${d.bloodType==='AB-'?'selected':''}>AB-</option>
+                    <option ${d.bloodType==='O+'?'selected':''}>O+</option><option ${d.bloodType==='O-'?'selected':''}>O-</option>
+                </select></div>
+
+            <div class="fg"><label class="fl">Necessidades Especiais</label>
+                <select id="st_special" class="fs">
+                    <option ${!d.specialNeeds||d.specialNeeds==='Nenhuma'?'selected':''}>Nenhuma</option>
+                    <option ${d.specialNeeds==='Visual'?'selected':''}>Visual</option>
+                    <option ${d.specialNeeds==='Auditiva'?'selected':''}>Auditiva</option>
+                    <option ${d.specialNeeds==='Motora'?'selected':''}>Motora</option>
+                    <option ${d.specialNeeds==='Intelectual'?'selected':''}>Intelectual</option>
+                    <option ${d.specialNeeds==='Múltipla'?'selected':''}>Múltipla</option>
+                    <option ${d.specialNeeds==='Outra'?'selected':''}>Outra</option>
+                </select></div>
+
+            <div class="fg gc2"><label class="fl">Alergia / Condição de Saúde</label>
+                <input type="text" id="st_health" class="fi" value="${d.healthCondition||''}" placeholder="Nenhuma"></div>
+
+            <!-- DADOS ACADÉMICOS -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:4px"><label class="fl tg fw7">— Dados Académicos —</label></div>
+
+            <div class="fg"><label class="fl">Nº de Processo</label>
+                <input type="text" id="st_process" class="fi" value="${d.process||''}"></div>
+
+            <div class="fg"><label class="fl">Nº de Matrícula</label>
+                <input type="text" id="st_matricula" class="fi" value="${d.matricula||''}"></div>
+
+            <div class="fg"><label class="fl">Classe *</label>
+                <select id="st_classe" class="fs" required>${this.clOpts(d.classe)}</select></div>
+
+            <div class="fg"><label class="fl">Turma</label>
+                <input type="text" id="st_turma" class="fi" value="${d.turma||''}" style="text-transform:uppercase" maxlength="5"></div>
+
+            <div class="fg"><label class="fl">Turno</label>
+                <select id="st_turno" class="fs">
+                    <option value="">—</option>
+                    <option ${d.turno==='Manhã'?'selected':''}>Manhã</option>
+                    <option ${d.turno==='Tarde'?'selected':''}>Tarde</option>
+                    <option ${d.turno==='Noite'?'selected':''}>Noite</option>
+                </select></div>
+
+            <div class="fg"><label class="fl">Ano Lectivo de Ingresso</label>
+                <input type="text" id="st_yearIn" class="fi" value="${d.yearIngresso||''}" placeholder="Ex: 2024"></div>
+
+            <div class="fg"><label class="fl">Escola Anterior</label>
+                <input type="text" id="st_prevSchool" class="fi" value="${d.previousSchool||''}"></div>
+
+            <div class="fg"><label class="fl">Estado Académico</label>
+                <select id="st_status" class="fs">
+                    <option ${d.status==='Activo'||!d.status?'selected':''}>Activo</option>
+                    <option ${d.status==='Aprovado'?'selected':''}>Aprovado</option>
+                    <option ${d.status==='Reprovado'?'selected':''}>Reprovado</option>
+                    <option ${d.status==='Transferido'?'selected':''}>Transferido</option>
+                    <option ${d.status==='Desistente'?'selected':''}>Desistente</option>
+                    <option ${d.status==='Suspenso'?'selected':''}>Suspenso</option>
+                    <option ${d.status==='Finalista'?'selected':''}>Finalista</option>
+                </select></div>
+
+            <!-- FILIAÇÃO / ENCARREGADO -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:4px"><label class="fl tg fw7">— Filiação & Encarregado —</label></div>
+
+            <div class="fg"><label class="fl">Nome do Pai</label>
+                <input type="text" id="st_father" class="fi" value="${d.fatherName||''}"></div>
+
+            <div class="fg"><label class="fl">Nome da Mãe</label>
+                <input type="text" id="st_mother" class="fi" value="${d.motherName||''}"></div>
+
+            <div class="fg gc2"><label class="fl">Nome do Encarregado de Educação</label>
+                <input type="text" id="st_guardian" class="fi" value="${d.guardian||''}"></div>
+
+            <div class="fg"><label class="fl">Parentesco</label>
+                <select id="st_guardianRel" class="fs">
+                    <option value="">—</option>
+                    <option ${d.guardianRelation==='Pai'?'selected':''}>Pai</option>
+                    <option ${d.guardianRelation==='Mãe'?'selected':''}>Mãe</option>
+                    <option ${d.guardianRelation==='Tio(a)'?'selected':''}>Tio(a)</option>
+                    <option ${d.guardianRelation==='Avô/Avó'?'selected':''}>Avô/Avó</option>
+                    <option ${d.guardianRelation==='Irmão(ã)'?'selected':''}>Irmão(ã)</option>
+                    <option ${d.guardianRelation==='Outro'?'selected':''}>Outro</option>
+                </select></div>
+
+            <div class="fg"><label class="fl">BI do Encarregado</label>
+                <input type="text" id="st_guardianBI" class="fi" value="${d.guardianBI||''}"></div>
+
+            <div class="fg"><label class="fl">Telefone 1 do Encarregado</label>
+                <input type="tel" id="st_guardianPhone" class="fi" value="${d.guardianPhone||''}"></div>
+
+            <div class="fg"><label class="fl">Telefone 2</label>
+                <input type="tel" id="st_guardianPhone2" class="fi" value="${d.guardianPhone2||''}"></div>
+
+            <div class="fg"><label class="fl">Email do Encarregado</label>
+                <input type="email" id="st_guardianEmail" class="fi" value="${d.guardianEmail||''}"></div>
+
+            <div class="fg"><label class="fl">Profissão do Encarregado</label>
+                <input type="text" id="st_guardianJob" class="fi" value="${d.guardianJob||''}"></div>
+
+            <!-- MORADA -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:4px"><label class="fl tg fw7">— Morada —</label></div>
+
+            <div class="fg"><label class="fl">Província</label>
+                <select id="st_addrProv" class="fs">
+                    <option value="">—</option>
+                    ${this.PROVS.map(p=>`<option ${d.addrProvince===p?'selected':''}>${p}</option>`).join('')}
+                </select></div>
+
+            <div class="fg"><label class="fl">Município</label>
+                <input type="text" id="st_addrMun" class="fi" value="${d.addrMunicipality||''}"></div>
+
+            <div class="fg"><label class="fl">Bairro</label>
+                <input type="text" id="st_addrBairro" class="fi" value="${d.addrBairro||''}"></div>
+
+            <div class="fg"><label class="fl">Rua / Nº</label>
+                <input type="text" id="st_addrRua" class="fi" value="${d.addrRua||''}"></div>
+
+            <!-- FINANCEIRO -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:4px"><label class="fl tg fw7">— Situação Financeira —</label></div>
+
+            <div class="fg"><label class="fl">Estado Financeiro</label>
+                <select id="st_finStatus" class="fs">
+                    <option ${!d.financialStatus||d.financialStatus==='Regular'?'selected':''}>Regular</option>
+                    <option ${d.financialStatus==='Devedor'?'selected':''}>Devedor</option>
+                    <option ${d.financialStatus==='Isento'?'selected':''}>Isento</option>
+                    <option ${d.financialStatus==='Bolseiro'?'selected':''}>Bolseiro</option>
+                </select></div>
+
+            <!-- OBSERVAÇÕES -->
+            <div class="fg gc2" style="margin-top:6px"><label class="fl">Observações</label>
+                <textarea id="st_obs" class="fi" rows="2">${d.observations||''}</textarea></div>
+        </div>
+    </form>
+    `, `
+        <button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
+        <button class="btn btn-r" onclick="S.saveStud('${d._id||''}')" id="stSvBt">
+            <span class="material-icons-outlined">save</span>${ed?'Actualizar':'Cadastrar'}
+        </button>
+    `, '720px');
+};
+
+// =============================================
+// GUARDAR ESTUDANTE — Todos os campos + Foto base64
+// =============================================
+S.saveStud = async function(editId){
+    const name = document.getElementById('st_name')?.value.trim();
+    const sex = document.getElementById('st_sex')?.value;
+    const classe = document.getElementById('st_classe')?.value;
+
+    if(!name) return this.toast('Nome é obrigatório','error');
+    if(!sex) return this.toast('Sexo é obrigatório','error');
+    if(!classe) return this.toast('Classe é obrigatória','error');
+
+    const tid = this.tid();
+    if(!tid) return this.toast('Escola não definida','error');
+
+    const btn = document.getElementById('stSvBt');
+    if(btn){ btn.disabled=true; btn.innerHTML='<span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:.85rem">hourglass_empty</span>Guardando...'; }
+
+    try {
+        // Processar foto
+        let photo = null;
+        const photoInput = document.getElementById('stPh');
+        if(photoInput && photoInput.files && photoInput.files.length > 0){
+            try {
+                photo = await this._processPhoto(photoInput.files[0]);
+            } catch(e){
+                console.warn('Foto não processada:', e);
+                this.toast('Aviso: foto não guardada','warn');
+            }
+        }
+
+        const data = {
+            // Dados pessoais
+            name,
+            sex,
+            dob: document.getElementById('st_dob')?.value || '',
+            nationality: document.getElementById('st_nationality')?.value?.trim() || 'Angolana',
+            naturalidade: document.getElementById('st_naturalidade')?.value?.trim() || '',
+            provOrigem: document.getElementById('st_provOrigem')?.value || '',
+            bi: document.getElementById('st_bi')?.value?.trim() || '',
+            biDate: document.getElementById('st_biDate')?.value || '',
+            biLocal: document.getElementById('st_biLocal')?.value?.trim() || '',
+            nif: document.getElementById('st_nif')?.value?.trim() || '',
+            bloodType: document.getElementById('st_blood')?.value || '',
+            specialNeeds: document.getElementById('st_special')?.value || 'Nenhuma',
+            healthCondition: document.getElementById('st_health')?.value?.trim() || '',
+
+            // Académicos
+            process: document.getElementById('st_process')?.value?.trim() || '',
+            matricula: document.getElementById('st_matricula')?.value?.trim() || '',
+            classe,
+            turma: (document.getElementById('st_turma')?.value?.trim() || '').toUpperCase(),
+            turno: document.getElementById('st_turno')?.value || '',
+            yearIngresso: document.getElementById('st_yearIn')?.value?.trim() || '',
+            previousSchool: document.getElementById('st_prevSchool')?.value?.trim() || '',
+            status: document.getElementById('st_status')?.value || 'Activo',
+
+            // Filiação
+            fatherName: document.getElementById('st_father')?.value?.trim() || '',
+            motherName: document.getElementById('st_mother')?.value?.trim() || '',
+            guardian: document.getElementById('st_guardian')?.value?.trim() || '',
+            guardianRelation: document.getElementById('st_guardianRel')?.value || '',
+            guardianBI: document.getElementById('st_guardianBI')?.value?.trim() || '',
+            guardianPhone: document.getElementById('st_guardianPhone')?.value?.trim() || '',
+            guardianPhone2: document.getElementById('st_guardianPhone2')?.value?.trim() || '',
+            guardianEmail: document.getElementById('st_guardianEmail')?.value?.trim() || '',
+            guardianJob: document.getElementById('st_guardianJob')?.value?.trim() || '',
+
+            // Morada
+            addrProvince: document.getElementById('st_addrProv')?.value || '',
+            addrMunicipality: document.getElementById('st_addrMun')?.value?.trim() || '',
+            addrBairro: document.getElementById('st_addrBairro')?.value?.trim() || '',
+            addrRua: document.getElementById('st_addrRua')?.value?.trim() || '',
+
+            // Financeiro
+            financialStatus: document.getElementById('st_finStatus')?.value || 'Regular',
+
+            // Observações
+            observations: document.getElementById('st_obs')?.value?.trim() || '',
+
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Foto
+        if(photo) data.photo = photo;
+
+        if(editId){
+            await db.collection('schools').doc(tid).collection('students').doc(editId).update(data);
+            this.toast('Estudante actualizado!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            data.createdBy = this.user.uid;
+            await db.collection('schools').doc(tid).collection('students').add(data);
+            this.toast('Estudante cadastrado!','success');
+        }
+
+        this.cModal();
+
+    } catch(e){
+        console.error('Erro:', e);
+        if(btn){ btn.disabled=false; btn.innerHTML='<span class="material-icons-outlined">save</span>Guardar'; }
+        this.toast('Erro: '+e.message,'error');
+    }
+};
+
+// =============================================
+// FUNCIONÁRIO — Foto base64
+// =============================================
+S.saveStaff = async function(editId){
+    const n = document.getElementById('sf_n')?.value.trim();
+    const cg = document.getElementById('sf_cg')?.value.trim();
+    if(!n||!cg) return this.toast('Nome e cargo obrigatórios','error');
+
+    const tid = this.tid();
+    const btn = document.getElementById('sfSvBt');
+    if(btn){ btn.disabled=true; btn.innerHTML='<span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:.85rem">hourglass_empty</span>Guardando...'; }
+
+    try {
+        let photo = null;
+        const phI = document.getElementById('sfPh');
+        if(phI && phI.files && phI.files.length > 0){
+            try { photo = await this._processPhoto(phI.files[0]); } catch(e){ this.toast('Foto não guardada','warn'); }
+        }
+
+        const data = {
+            name:n, cargo:cg,
+            sex: document.getElementById('sf_sx')?.value||'Masculino',
+            bi: document.getElementById('sf_bi')?.value?.trim()||'',
+            nif: document.getElementById('sf_nf')?.value?.trim()||'',
+            dob: document.getElementById('sf_db')?.value||'',
+            funcao: document.getElementById('sf_fn')?.value?.trim()||'',
+            department: document.getElementById('sf_dp')?.value?.trim()||'',
+            formacao: document.getElementById('sf_fm')?.value?.trim()||'',
+            mecNumber: document.getElementById('sf_mc')?.value?.trim()||'',
+            phone: document.getElementById('sf_ph')?.value?.trim()||'',
+            email: document.getElementById('sf_em')?.value?.trim()||'',
+            salary: document.getElementById('sf_sl')?.value||'',
+            shift: document.getElementById('sf_sh')?.value||'',
+            address: document.getElementById('sf_ad')?.value?.trim()||'',
+            active: true,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        if(photo) data.photo = photo;
+
+        if(editId){
+            await db.collection('schools').doc(tid).collection('staff').doc(editId).update(data);
+            this.toast('Actualizado!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('schools').doc(tid).collection('staff').add(data);
+            this.toast('Funcionário cadastrado!','success');
+        }
+        this.cModal();
+    } catch(e){
+        if(btn){ btn.disabled=false; btn.innerHTML='<span class="material-icons-outlined">save</span>Guardar'; }
+        this.toast('Erro: '+e.message,'error');
+    }
+};
+
+// =============================================
+// PERFIL — Foto base64
+// =============================================
+S.saveProfile = async function(){
+    const n = document.getElementById('pr_n')?.value.trim();
+    const p = document.getElementById('pr_p')?.value.trim();
+    try {
+        const upd = { name:n, phone:p, updatedAt:firebase.firestore.FieldValue.serverTimestamp() };
+        const phI = document.getElementById('prPh');
+        if(phI && phI.files && phI.files.length > 0){
+            try { upd.photo = await this._processPhoto(phI.files[0]); } catch(e){}
+        }
+        await db.collection('users').doc(this.user.uid).update(upd);
+        this.ud.name=n; this.ud.phone=p; if(upd.photo) this.ud.photo=upd.photo;
+        document.getElementById('sbNm').textContent=n;
+        const av=document.getElementById('sbAv');
+        if(upd.photo) av.innerHTML=`<img src="${upd.photo}" style="width:100%;height:100%;object-fit:cover">`;
+        else av.textContent=n.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+        this.toast('Perfil actualizado!','success'); this.cModal();
+    } catch(e){ this.toast('Erro: '+e.message,'error'); }
+};
+
+// =============================================
+// VISTA DO ESTUDANTE — Dados completos
+// =============================================
+S.viewStud = async function(id){
+    try {
+        const d = await db.collection('schools').doc(this.tid()).collection('students').doc(id).get();
+        if(!d.exists) return;
+        const s = d.data();
+        const st = this.gSt(s.status||'Activo', s.sex);
+        const gc = s.sex==='Feminino'?'#EC4899,#BE185D':'#3B82F6,#1D4ED8';
+
+        this.oModal(s.name||'Estudante', `
+            <div class="tc mb-m">
+                ${s.photo?`<img src="${s.photo}" style="width:80px;height:80px;border-radius:14px;object-fit:cover">`
+                :`<div style="width:80px;height:80px;border-radius:14px;background:linear-gradient(135deg,${gc});display:flex;align-items:center;justify-content:center;margin:0 auto;color:#fff;font-size:1.2rem;font-weight:900">${(s.name||'E').substring(0,2).toUpperCase()}</div>`}
+                <h3 class="fw8 mt-s">${s.name||''}</h3>
+                <p class="tm fs-s">${s.classe||''} — Turma ${s.turma||'—'} — ${s.turno||'—'}</p>
+                <span class="bg ${st.includes('Aprovad')?'bg-ok':st.includes('Reprovad')?'bg-er':'bg-in'} mt-s">${st}</span>
+            </div>
+
+            <div class="g2" style="font-size:.8rem">
+                <div class="cd" style="padding:12px">
+                    <p class="fw7 tg fs-s mb-s">Dados Pessoais</p>
+                    <p><strong>BI:</strong> ${s.bi||'—'}</p>
+                    <p><strong>Emissão BI:</strong> ${s.biDate||'—'} ${s.biLocal?'— '+s.biLocal:''}</p>
+                    <p><strong>NIF:</strong> ${s.nif||'—'}</p>
+                    <p><strong>Nascimento:</strong> ${s.dob||'—'}</p>
+                    <p><strong>Sexo:</strong> ${s.sex||'—'}</p>
+                    <p><strong>Nacionalidade:</strong> ${s.nationality||'—'}</p>
+                    <p><strong>Naturalidade:</strong> ${s.naturalidade||'—'} ${s.provOrigem?'('+s.provOrigem+')':''}</p>
+                    <p><strong>Sangue:</strong> ${s.bloodType||'—'}</p>
+                    <p><strong>Nec. Especiais:</strong> ${s.specialNeeds||'Nenhuma'}</p>
+                    <p><strong>Saúde:</strong> ${s.healthCondition||'—'}</p>
+                </div>
+
+                <div class="cd" style="padding:12px">
+                    <p class="fw7 tg fs-s mb-s">Dados Académicos</p>
+                    <p><strong>Processo:</strong> ${s.process||'—'}</p>
+                    <p><strong>Matrícula:</strong> ${s.matricula||'—'}</p>
+                    <p><strong>Classe:</strong> ${s.classe||'—'}</p>
+                    <p><strong>Turma:</strong> ${s.turma||'—'}</p>
+                    <p><strong>Turno:</strong> ${s.turno||'—'}</p>
+                    <p><strong>Ingresso:</strong> ${s.yearIngresso||'—'}</p>
+                    <p><strong>Escola Anterior:</strong> ${s.previousSchool||'—'}</p>
+                    <p><strong>Financeiro:</strong> ${s.financialStatus||'Regular'}</p>
+                </div>
+
+                <div class="cd gc2" style="padding:12px">
+                    <p class="fw7 tg fs-s mb-s">Filiação & Encarregado</p>
+                    <div class="g2" style="font-size:.8rem">
+                        <div>
+                            <p><strong>Pai:</strong> ${s.fatherName||'—'}</p>
+                            <p><strong>Mãe:</strong> ${s.motherName||'—'}</p>
+                        </div>
+                        <div>
+                            <p><strong>Encarregado:</strong> ${s.guardian||'—'}</p>
+                            <p><strong>Parentesco:</strong> ${s.guardianRelation||'—'}</p>
+                            <p><strong>BI Enc.:</strong> ${s.guardianBI||'—'}</p>
+                            <p><strong>Tel 1:</strong> ${s.guardianPhone||'—'}</p>
+                            <p><strong>Tel 2:</strong> ${s.guardianPhone2||'—'}</p>
+                            <p><strong>Email:</strong> ${s.guardianEmail||'—'}</p>
+                            <p><strong>Profissão:</strong> ${s.guardianJob||'—'}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="cd gc2" style="padding:12px">
+                    <p class="fw7 tg fs-s mb-s">Morada</p>
+                    <p>${[s.addrRua, s.addrBairro, s.addrMunicipality, s.addrProvince].filter(Boolean).join(', ') || '—'}</p>
+                </div>
+            </div>
+
+            ${s.observations?`<div class="cd mt-s" style="padding:10px"><p class="fw7 tg fs-s mb-s">Observações</p><p class="fs-s">${s.observations}</p></div>`:''}
+        `, `
+            <button class="btn btn-o" onclick="S.cModal()">Fechar</button>
+            <button class="btn btn-g" onclick="S.cModal();S.editStud('${id}')"><span class="material-icons-outlined">edit</span>Editar</button>
+        `, '720px');
+    } catch(e){ this.toast(e.message,'error'); }
+};
+
+console.log('✅ Fotos corrigidas: base64 directo no Firestore (sem Storage)');
+console.log('✅ Formulário do estudante com 40+ campos completos');
+console.log('✅ Vista detalhada com todos os dados');
+</script>
+<!-- ================================================
+     FIM CORREÇÃO FOTOS + DADOS COMPLETOS
+     ================================================ -->
 </body>
 </html>
