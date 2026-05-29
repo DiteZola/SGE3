@@ -11706,5 +11706,1701 @@ console.log('✅ Vista detalhada com todos os dados');
 <!-- ================================================
      FIM CORREÇÃO FOTOS + DADOS COMPLETOS
      ================================================ -->
+<!-- ================================================
+     CORREÇÃO FINANCEIRO COMPLETA
+     ================================================ -->
+<script>
+// =============================================
+// REESCREVER FINANCEIRO COMPLETO
+// =============================================
+S._routes['finance'] = function(){
+    if(!this.hasRole('diretor','subdiretor_administrativo','super_admin')) return this.pgAccessDenied();
+    const pc = document.getElementById('pgC'), tid = this.tid();
+    if(!tid) return pc.innerHTML = '<div class="fade cd tc" style="padding:40px"><p class="tr">Escola não definida</p></div>';
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Gestão Financeira</h2><p class="tm fs-s">Receitas, despesas, propinas e controlo</p></div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap">
+                <button class="btn btn-gn" onclick="S._mdPay()"><span class="material-icons-outlined">add</span>Receita</button>
+                <button class="btn btn-o btn-s" style="border-color:#DC2626;color:#DC2626" onclick="S._mdExp()"><span class="material-icons-outlined">remove</span>Despesa</button>
+                <button class="btn btn-g btn-s" onclick="S._mdFinConf()"><span class="material-icons-outlined">settings</span>Config. Valores</button>
+                <button class="btn btn-o btn-s" onclick="S._viewDbt()"><span class="material-icons-outlined">warning</span>Devedores</button>
+                <button class="btn btn-o btn-s" onclick="S._expFinXL()"><span class="material-icons-outlined" style="font-size:.9rem">table_chart</span>XLSX</button>
+            </div>
+        </div>
+
+        <div class="g3 mb-l">
+            <div class="stc" style="border-left:4px solid #059669"><div class="st-ic" style="background:rgba(5,150,105,.08);color:#059669"><span class="material-icons-outlined">trending_up</span></div><div><div class="st-v" id="fR" style="color:#059669">0 Kz</div><div class="st-l">Receita</div></div></div>
+            <div class="stc" style="border-left:4px solid #DC2626"><div class="st-ic" style="background:rgba(220,38,38,.08);color:#DC2626"><span class="material-icons-outlined">trending_down</span></div><div><div class="st-v" id="fD" style="color:#DC2626">0 Kz</div><div class="st-l">Despesa</div></div></div>
+            <div class="stc" style="border-left:4px solid #D4A017"><div class="st-ic" style="background:rgba(212,160,23,.08);color:#D4A017"><span class="material-icons-outlined">account_balance_wallet</span></div><div><div class="st-v" id="fS" style="color:#D4A017">0 Kz</div><div class="st-l">Saldo</div></div></div>
+        </div>
+
+        <div id="fConfigs" class="cd mb-l" style="display:none"><h3 class="fw7 fs-m mb-m">Valores Configurados</h3><div id="fConfList"></div></div>
+
+        <div class="g2 mb-l">
+            <div class="cd"><h3 class="fw7 fs-m mb-m">Receitas vs Despesas</h3><canvas id="fCh1" height="180"></canvas></div>
+            <div class="cd"><h3 class="fw7 fs-m mb-m">Por Serviço</h3><canvas id="fCh2" height="180"></canvas></div>
+        </div>
+
+        <div class="cd p0" style="overflow:hidden">
+            <div style="padding:12px;border-bottom:1px solid #E5E7EB;display:flex;gap:8px;flex-wrap:wrap">
+                <input type="text" class="fi" placeholder="Pesquisar..." oninput="S.filterTbl('fTb',this.value)" style="flex:1;min-width:140px">
+                <select class="fs" style="width:auto;min-width:90px" onchange="S._fFnTp(this.value)"><option value="">Todos</option><option value="receita">Receitas</option><option value="despesa">Despesas</option></select>
+            </div>
+            <div class="ovx"><table class="tbl"><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Serviço</th><th>Aluno</th><th>Valor</th><th class="tc">Acções</th></tr></thead>
+            <tbody id="fTb"><tr><td colspan="7" class="tc tm" style="padding:35px">Carregando...</td></tr></tbody></table></div>
+        </div>
+    </div>`;
+
+    this._loadFinConfigs(tid);
+    this._loadFinRecords(tid);
+};
+
+S._fFnTp = function(t){ document.querySelectorAll('#fTb tr').forEach(r=>{ r.style.display=!t||r.dataset.tp===t?'':'none' }) };
+
+// Carregar registos financeiros
+S._loadFinRecords = function(tid){
+    const unsub = db.collection('schools').doc(tid).collection('finances')
+        .orderBy('createdAt','desc').limit(100).onSnapshot(snap => {
+        const tb = document.getElementById('fTb');
+        if(!tb) return;
+
+        if(snap.empty){
+            tb.innerHTML = '<tr><td colspan="7" class="tc tm" style="padding:40px">Nenhum registo</td></tr>';
+            this._updFinDash(0,0,{},{},{});
+            return;
+        }
+
+        let h='', tR=0, tD=0, svc={}, mR={}, mD={};
+        snap.forEach(doc => {
+            const f = doc.data();
+            const isR = f.type==='receita';
+            if(isR){ tR+=(f.amount||0); svc[f.service||'Outro']=(svc[f.service||'Outro']||0)+(f.amount||0); }
+            else { tD+=(f.amount||0); }
+            const mo = f.date?f.date.substring(3):'—';
+            if(isR) mR[mo]=(mR[mo]||0)+(f.amount||0); else mD[mo]=(mD[mo]||0)+(f.amount||0);
+
+            h += `<tr data-tp="${f.type||''}">
+                <td class="fs-s" style="white-space:nowrap">${f.date||'—'}</td>
+                <td><span class="bg ${isR?'bg-ok':'bg-er'}">${isR?'Receita':'Despesa'}</span></td>
+                <td class="fs-s">${f.description||'—'}</td>
+                <td class="fs-s">${f.service||f.category||'—'}</td>
+                <td class="fs-s fw7">${f.studentName||'—'}</td>
+                <td class="fw8" style="color:${isR?'#059669':'#DC2626'};white-space:nowrap">${isR?'+':'−'} ${(f.amount||0).toLocaleString('pt-AO')} Kz</td>
+                <td class="tc"><div style="display:flex;gap:2px;justify-content:center">
+                    ${isR?`<button class="btn btn-gh btn-s" onclick="S.genRecibo('${doc.id}')" title="Recibo"><span class="material-icons-outlined" style="font-size:.8rem;color:#D4A017">receipt</span></button>`:''}
+                    <button class="btn btn-gh btn-s" onclick="S._delFin('${doc.id}')"><span class="material-icons-outlined" style="font-size:.8rem;color:#DC2626">delete</span></button>
+                </div></td></tr>`;
+        });
+
+        tb.innerHTML = h;
+        this._updFinDash(tR, tD, svc, mR, mD);
+    });
+    this._ls.push(unsub);
+};
+
+S._updFinDash = function(r, d, svc, mR, mD){
+    const rE=document.getElementById('fR'), dE=document.getElementById('fD'), sE=document.getElementById('fS');
+    if(rE) rE.textContent=r.toLocaleString('pt-AO')+' Kz';
+    if(dE) dE.textContent=d.toLocaleString('pt-AO')+' Kz';
+    if(sE){ const s=r-d; sE.textContent=s.toLocaleString('pt-AO')+' Kz'; sE.style.color=s>=0?'#059669':'#DC2626'; }
+    try{
+        const c1=document.getElementById('fCh1');
+        if(c1&&mR){
+            const ms=[...new Set([...Object.keys(mR||{}),...Object.keys(mD||{})])].sort();
+            if(S._ch.f1)S._ch.f1.destroy();
+            S._ch.f1=new Chart(c1,{type:'bar',data:{labels:ms.length?ms:['—'],datasets:[{label:'Receitas',data:ms.map(m=>(mR||{})[m]||0),backgroundColor:'rgba(5,150,105,.7)'},{label:'Despesas',data:ms.map(m=>(mD||{})[m]||0),backgroundColor:'rgba(220,38,38,.7)'}]},options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+        }
+        const c2=document.getElementById('fCh2');
+        if(c2&&svc&&Object.keys(svc).length){
+            if(S._ch.f2)S._ch.f2.destroy();
+            S._ch.f2=new Chart(c2,{type:'doughnut',data:{labels:Object.keys(svc),datasets:[{data:Object.values(svc),backgroundColor:['#CC1B2B','#D4A017','#059669','#2563EB','#7C3AED','#EC4899','#F59E0B','#10B981'],borderWidth:0}]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}});
+        }
+    }catch(e){}
+};
+
+S._delFin = async function(id){
+    if(!confirm('Eliminar este registo?')) return;
+    try{await db.collection('schools').doc(this.tid()).collection('finances').doc(id).delete();this.toast('Eliminado','success')}catch(e){this.toast(e.message,'error')}
+};
+
+// =============================================
+// CONFIGS FINANCEIRAS
+// =============================================
+S._loadFinConfigs = async function(tid){
+    const el = document.getElementById('fConfList');
+    const wrap = document.getElementById('fConfigs');
+    if(!el||!wrap) return;
+    try{
+        const snap = await db.collection('schools').doc(tid).collection('finConfig').get();
+        if(snap.empty){ wrap.style.display='none'; return; }
+        wrap.style.display='';
+        let h='<div class="ovx"><table class="tbl"><thead><tr><th>Serviço</th><th>Classe/Nível</th><th>Valor</th><th>Período</th><th class="tc">Acções</th></tr></thead><tbody>';
+        snap.forEach(doc=>{const c=doc.data();
+            h+=`<tr><td class="fw7">${c.service||'—'}</td><td><span class="bg bg-in">${c.level||'Todas'}</span></td><td class="fw8" style="color:#059669">${(c.amount||0).toLocaleString('pt-AO')} Kz</td><td class="fs-s">${c.period||'Mensal'}</td>
+            <td class="tc"><button class="btn btn-gh btn-s" onclick="S._delFC('${doc.id}')"><span class="material-icons-outlined" style="font-size:.8rem;color:#DC2626">delete</span></button></td></tr>`;
+        });
+        h+='</tbody></table></div>';
+        el.innerHTML=h;
+    }catch(e){wrap.style.display='none'}
+};
+
+S._mdFinConf = function(){
+    const levels=['Todas','Iniciação','Ensino Primário','I Ciclo','II Ciclo',...this.allCls()];
+    this.oModal('Configurar Valor',`<form onsubmit="return false"><div class="g2">
+        <div class="fg"><label class="fl">Serviço *</label><select id="fc_sv" class="fs"><option>Propina</option><option>Matrícula</option><option>Rematrícula</option><option>Certificado</option><option>Declaração</option><option>Boletim</option><option>Passe</option><option>Taxa Exame</option><option>Uniforme</option><option>Material</option><option>Seguro</option><option>Outro</option></select></div>
+        <div class="fg"><label class="fl">Classe/Nível *</label><select id="fc_lv" class="fs">${levels.map(l=>`<option>${l}</option>`).join('')}</select></div>
+        <div class="fg"><label class="fl">Valor (Kz) *</label><input type="number" id="fc_am" class="fi" min="0" required></div>
+        <div class="fg"><label class="fl">Período</label><select id="fc_pr" class="fs"><option>Mensal</option><option>Trimestral</option><option>Semestral</option><option>Anual</option><option>Único</option></select></div>
+    </div></form>`,`<button class="btn btn-o" onclick="S.cModal()">Cancelar</button><button class="btn btn-r" onclick="S._saveFC()"><span class="material-icons-outlined">save</span>Guardar</button>`,'500px');
+};
+
+S._saveFC = async function(){
+    const sv=document.getElementById('fc_sv')?.value,lv=document.getElementById('fc_lv')?.value,am=parseFloat(document.getElementById('fc_am')?.value);
+    if(!sv||!am) return this.toast('Preencha tudo','error');
+    try{await db.collection('schools').doc(this.tid()).collection('finConfig').add({service:sv,level:lv,amount:am,period:document.getElementById('fc_pr')?.value||'Mensal',createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    this.toast('Configuração guardada!','success');this.cModal();this._loadFinConfigs(this.tid())}catch(e){this.toast(e.message,'error')}
+};
+
+S._delFC = async function(id){
+    if(!confirm('Eliminar?'))return;
+    try{await db.collection('schools').doc(this.tid()).collection('finConfig').doc(id).delete();this.toast('Eliminada','success');this._loadFinConfigs(this.tid())}catch(e){this.toast(e.message,'error')}
+};
+
+// =============================================
+// PAGAMENTO COM FILTRO AUTOMÁTICO DE ALUNOS
+// =============================================
+S._mdPay = async function(){
+    const tid = this.tid();
+
+    // Carregar configs de valores
+    let cfgOpts = '';
+    try{const s=await db.collection('schools').doc(tid).collection('finConfig').get();
+    s.forEach(d=>{const c=d.data();cfgOpts+=`<option value="${c.service}|${c.amount}">${c.service} (${c.level}) — ${c.amount.toLocaleString('pt-AO')} Kz</option>`})}catch(e){}
+
+    // Carregar TODOS os alunos para filtro local
+    let studentsCache = [];
+    try{const s=await db.collection('schools').doc(tid).collection('students').get();
+    s.forEach(d=>{const st=d.data();studentsCache.push({id:d.id,name:st.name||'',classe:st.classe||'',turma:st.turma||'',process:st.process||''})});
+    studentsCache.sort((a,b)=>a.name.localeCompare(b.name))}catch(e){}
+
+    // Guardar cache global
+    S._payStudents = studentsCache;
+
+    this.oModal('Registar Receita / Pagamento',`
+        <form onsubmit="return false">
+            ${cfgOpts?`<div class="fg"><label class="fl">Valor Pré-configurado</label>
+                <select class="fs" onchange="S._applyFC(this.value)"><option value="">— Preenchimento manual —</option>${cfgOpts}</select></div>
+                <hr style="border-color:rgba(0,0,0,.05);margin:8px 0">`:''}
+
+            <div class="g2">
+                <!-- CAMPO ALUNO COM FILTRO -->
+                <div class="fg gc2">
+                    <label class="fl">Nome do Aluno * <span class="tm fs-s">(comece a digitar para filtrar)</span></label>
+                    <div style="position:relative">
+                        <input type="text" id="py_name" class="fi" placeholder="Escreva o nome do aluno..." 
+                            autocomplete="off" oninput="S._payFilter(this.value)" onfocus="S._payFilter(this.value)">
+                        <input type="hidden" id="py_studId" value="">
+                        <div id="pySugg" style="position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #E5E7EB;border-radius:0 0 8px 8px;max-height:180px;overflow-y:auto;z-index:100;display:none;box-shadow:0 4px 12px rgba(0,0,0,.1)"></div>
+                    </div>
+                    <div id="pySelected" style="margin-top:4px"></div>
+                </div>
+
+                <div class="fg"><label class="fl">Serviço *</label>
+                    <select id="py_sv" class="fs"><option>Propina</option><option>Matrícula</option><option>Rematrícula</option><option>Certificado</option><option>Declaração</option><option>Boletim</option><option>Passe</option><option>Multa</option><option>Taxa Exame</option><option>Outro</option></select></div>
+
+                <div class="fg"><label class="fl">Valor (Kz) *</label>
+                    <input type="number" id="py_am" class="fi" min="1" required></div>
+
+                <div class="fg"><label class="fl">Mês Referência</label>
+                    <input type="month" id="py_mo" class="fi"></div>
+
+                <div class="fg"><label class="fl">Desconto (Kz)</label>
+                    <input type="number" id="py_ds" class="fi" value="0" min="0"></div>
+
+                <div class="fg"><label class="fl">Multa (Kz)</label>
+                    <input type="number" id="py_ml" class="fi" value="0" min="0"></div>
+
+                <div class="fg"><label class="fl">Parcela</label>
+                    <select id="py_pc" class="fs"><option value="">Pagamento Único</option><option>1ª Parcela</option><option>2ª Parcela</option><option>3ª Parcela</option><option>4ª Parcela</option></select></div>
+
+                <div class="fg gc2"><label class="fl">Observação</label>
+                    <input type="text" id="py_ob" class="fi"></div>
+            </div>
+        </form>
+    `,`<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
+        <button class="btn btn-gn" onclick="S._savePay()" id="pySvBt"><span class="material-icons-outlined">save</span>Registar Pagamento</button>`,'600px');
+
+    // Fechar sugestões ao clicar fora
+    setTimeout(()=>{
+        document.getElementById('mBd')?.addEventListener('click',(e)=>{
+            if(!e.target.closest('#py_name')&&!e.target.closest('#pySugg')){
+                const sg=document.getElementById('pySugg');if(sg)sg.style.display='none';
+            }
+        });
+    },200);
+};
+
+// Filtro de alunos em tempo real
+S._payFilter = function(q){
+    const sugg = document.getElementById('pySugg');
+    if(!sugg) return;
+
+    if(!q || q.length < 1){
+        // Mostrar todos (primeiros 20)
+        const all = (S._payStudents||[]).slice(0,20);
+        if(all.length === 0){ sugg.style.display='none'; return; }
+        let h = '';
+        all.forEach(s => { h += this._paySuggItem(s); });
+        sugg.innerHTML = h;
+        sugg.style.display = 'block';
+        return;
+    }
+
+    const ql = q.toLowerCase();
+    const filtered = (S._payStudents||[]).filter(s => 
+        s.name.toLowerCase().includes(ql) || s.process.includes(q) || (s.classe+' '+s.turma).toLowerCase().includes(ql)
+    ).slice(0, 15);
+
+    if(filtered.length === 0){
+        sugg.innerHTML = '<div style="padding:10px;color:#6B7280;font-size:.8rem;text-align:center">Nenhum aluno encontrado</div>';
+        sugg.style.display = 'block';
+        return;
+    }
+
+    let h = '';
+    filtered.forEach(s => { h += this._paySuggItem(s); });
+    sugg.innerHTML = h;
+    sugg.style.display = 'block';
+};
+
+S._paySuggItem = function(s){
+    return `<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f3f3f3;font-size:.82rem;transition:background .1s"
+        onmouseover="this.style.background='rgba(204,27,43,.04)'"
+        onmouseout="this.style.background=''"
+        onclick="S._paySelect('${s.id}','${S.san(s.name)}','${s.classe}','${s.turma}','${s.process}')">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+                <strong>${s.name}</strong>
+                <span style="color:#6B7280;font-size:.72rem;margin-left:6px">${s.classe} ${s.turma}</span>
+            </div>
+            <span style="color:#9CA3AF;font-size:.68rem">${s.process||''}</span>
+        </div>
+    </div>`;
+};
+
+S._paySelect = function(id, name, classe, turma, process){
+    document.getElementById('py_name').value = name;
+    document.getElementById('py_studId').value = id;
+    document.getElementById('pySugg').style.display = 'none';
+
+    document.getElementById('pySelected').innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(5,150,105,.06);border:1px solid rgba(5,150,105,.2);border-radius:6px;font-size:.78rem">
+            <span class="material-icons-outlined" style="font-size:.9rem;color:#059669">check_circle</span>
+            <strong>${name}</strong> — ${classe} ${turma} ${process?'• Proc: '+process:''}
+            <button onclick="S._payClear()" style="margin-left:auto;background:none;border:none;cursor:pointer;color:#DC2626;font-size:.75rem">✕</button>
+        </div>
+    `;
+};
+
+S._payClear = function(){
+    document.getElementById('py_name').value = '';
+    document.getElementById('py_studId').value = '';
+    document.getElementById('pySelected').innerHTML = '';
+};
+
+S._applyFC = function(v){
+    if(!v) return;
+    const parts = v.split('|');
+    if(parts.length >= 2){
+        const svEl = document.getElementById('py_sv');
+        if(svEl){ for(let i=0;i<svEl.options.length;i++){ if(svEl.options[i].text===parts[0]){svEl.selectedIndex=i;break} } }
+        const amEl = document.getElementById('py_am');
+        if(amEl) amEl.value = parts[1];
+    }
+};
+
+// Guardar pagamento com confirmação
+S._savePay = async function(){
+    const name = document.getElementById('py_name')?.value.trim();
+    const studId = document.getElementById('py_studId')?.value;
+    const am = parseFloat(document.getElementById('py_am')?.value);
+    const sv = document.getElementById('py_sv')?.value;
+
+    if(!name) return this.toast('Seleccione um aluno','error');
+    if(!am || am <= 0) return this.toast('Valor inválido','error');
+
+    const ds = parseFloat(document.getElementById('py_ds')?.value)||0;
+    const ml = parseFloat(document.getElementById('py_ml')?.value)||0;
+    const total = am - ds + ml;
+
+    if(!confirm(`CONFIRMAÇÃO DE PAGAMENTO\n\nAluno: ${name}\nServiço: ${sv}\nValor: ${am.toLocaleString('pt-AO')} Kz\nDesconto: ${ds.toLocaleString('pt-AO')} Kz\nMulta: ${ml.toLocaleString('pt-AO')} Kz\n━━━━━━━━━━━━━━━━━━\nTOTAL: ${total.toLocaleString('pt-AO')} Kz\n\nConfirma?`)) return;
+
+    const btn = document.getElementById('pySvBt');
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:.85rem">hourglass_empty</span>Processando...'}
+
+    const rn = 'REC-'+Date.now().toString(36).toUpperCase();
+
+    try{
+        const ref = await db.collection('schools').doc(this.tid()).collection('finances').add({
+            type:'receita', studentName:name, studentId:studId||'',
+            service:sv, amount:total, originalAmount:am, discount:ds, multa:ml,
+            month:document.getElementById('py_mo')?.value||'',
+            parcela:document.getElementById('py_pc')?.value||'',
+            description:`${sv} — ${name}`,
+            observation:document.getElementById('py_ob')?.value?.trim()||'',
+            date:new Date().toLocaleDateString('pt-AO'),
+            operator:this.ud?.name||'', operatorId:this.user.uid,
+            receiptNumber:rn, confirmed:true,
+            createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        this.log('finance',`Pagamento: ${total.toLocaleString('pt-AO')} Kz — ${sv} — ${name} — ${rn}`);
+        this.toast(`✅ ${total.toLocaleString('pt-AO')} Kz registado! Recibo: ${rn}`,'success');
+        this.cModal();
+
+        if(confirm('Gerar recibo PDF agora?')) setTimeout(()=>this.genRecibo(ref.id),300);
+    }catch(e){
+        if(btn){btn.disabled=false;btn.innerHTML='<span class="material-icons-outlined">save</span>Registar'}
+        this.toast('Erro: '+e.message,'error');
+    }
+};
+
+// =============================================
+// DESPESA COM CONFIRMAÇÃO
+// =============================================
+S._mdExp = function(){
+    this.oModal('Registar Despesa',`<form onsubmit="return false"><div class="g2">
+        <div class="fg gc2"><label class="fl">Descrição *</label><input type="text" id="ex_ds" class="fi" required></div>
+        <div class="fg"><label class="fl">Valor (Kz) *</label><input type="number" id="ex_am" class="fi" min="1" required></div>
+        <div class="fg"><label class="fl">Categoria</label><select id="ex_ct" class="fs"><option>Material</option><option>Salários</option><option>Manutenção</option><option>Água/Luz</option><option>Transporte</option><option>Alimentação</option><option>Serviços</option><option>Outro</option></select></div>
+        <div class="fg gc2"><label class="fl">Observação</label><input type="text" id="ex_ob" class="fi"></div>
+    </div></form>`,`<button class="btn btn-o" onclick="S.cModal()">Cancelar</button><button class="btn btn-r" onclick="S._saveExp()" id="exSvBt"><span class="material-icons-outlined">save</span>Registar</button>`);
+};
+
+S._saveExp = async function(){
+    const ds=document.getElementById('ex_ds')?.value.trim(), am=parseFloat(document.getElementById('ex_am')?.value);
+    if(!ds||!am) return this.toast('Preencha tudo','error');
+    if(!confirm(`Despesa: ${am.toLocaleString('pt-AO')} Kz\n${ds}\n\nConfirma?`)) return;
+    const btn=document.getElementById('exSvBt');if(btn)btn.disabled=true;
+    try{
+        await db.collection('schools').doc(this.tid()).collection('finances').add({
+            type:'despesa',description:ds,amount:am,
+            category:document.getElementById('ex_ct')?.value||'',
+            observation:document.getElementById('ex_ob')?.value?.trim()||'',
+            date:new Date().toLocaleDateString('pt-AO'),
+            operator:this.ud?.name||'',operatorId:this.user.uid,confirmed:true,
+            createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
+        this.log('finance',`Despesa: ${am.toLocaleString('pt-AO')} Kz — ${ds}`);
+        this.toast(`✅ Despesa ${am.toLocaleString('pt-AO')} Kz registada!`,'success');this.cModal();
+    }catch(e){if(btn)btn.disabled=false;this.toast(e.message,'error')}
+};
+
+// =============================================
+// DEVEDORES — SEM ÍNDICE COMPOSTO
+// =============================================
+S._viewDbt = async function(){
+    const tid = this.tid();
+    this.oModal('Lista de Devedores',
+        '<div id="dbtArea"><div class="fc" style="padding:16px"><div class="ld-spin" style="width:24px;height:24px;border-width:2px"></div></div></div>',
+        `<button class="btn btn-o" onclick="S.cModal()">Fechar</button>
+         <button class="btn btn-g btn-s" onclick="S._expDbtXL()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+         <button class="btn btn-r btn-s" onclick="S._expDbtPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>`,'680px');
+
+    try{
+        // SEM ÍNDICE: carregar todos e filtrar no cliente
+        const snap = await db.collection('schools').doc(tid).collection('students').get();
+        const debtors = [];
+        snap.forEach(d => {
+            const s = d.data();
+            if(s.financialStatus === 'Devedor'){
+                debtors.push({id:d.id, ...s});
+            }
+        });
+        debtors.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+
+        const el = document.getElementById('dbtArea');
+        if(!el) return;
+
+        if(debtors.length === 0){
+            el.innerHTML = '<div class="tc" style="padding:20px"><span class="material-icons-outlined" style="font-size:1.8rem;color:#059669">check_circle</span><p class="tm mt-s">Nenhum devedor!</p></div>';
+            S._dbtData = null;
+            return;
+        }
+
+        S._dbtData = debtors;
+
+        let h = `<p class="fw7 fs-s mb-m">${debtors.length} devedor${debtors.length>1?'es':''}</p>
+        <div class="ovx"><table class="tbl"><thead><tr><th>Nº</th><th>Nome</th><th>Classe</th><th>Turma</th><th>Tel. Enc.</th></tr></thead><tbody>`;
+        debtors.forEach((s,i) => {
+            h += `<tr><td>${i+1}</td><td class="fw7">${s.name||''}</td><td>${s.classe||''}</td><td>${s.turma||''}</td><td class="fs-s">${s.guardianPhone||'—'}</td></tr>`;
+        });
+        h += '</tbody></table></div>';
+        el.innerHTML = h;
+    }catch(e){
+        document.getElementById('dbtArea').innerHTML = `<p class="tr fs-s">${e.message}</p>`;
+    }
+};
+
+S._expDbtXL = function(){
+    if(!S._dbtData||!S._dbtData.length) return S.toast('Sem dados','warn');
+    const d=[];S._dbtData.forEach((s,i)=>d.push({Nº:i+1,Nome:s.name,Classe:s.classe,Turma:s.turma,Contacto:s.guardianPhone||''}));
+    const ws=XLSX.utils.json_to_sheet(d);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Devedores');
+    XLSX.writeFile(wb,`Devedores_${new Date().toISOString().split('T')[0]}.xlsx`);S.toast('Exportado!','success');
+};
+
+S._expDbtPDF = async function(){
+    if(!S._dbtData||!S._dbtData.length) return S.toast('Sem dados','warn');
+    const esc=S.school||{};const{jsPDF}=window.jspdf;const doc=new jsPDF('p','mm','a4');
+    S._pdfHdr(doc,esc);doc.setFontSize(14);doc.setFont('helvetica','bold');doc.text('LISTA DE DEVEDORES',105,46,{align:'center'});
+    const rows=[];S._dbtData.forEach((s,i)=>rows.push([i+1,s.name,s.classe,s.turma||'',s.guardianPhone||'']));
+    doc.autoTable({startY:54,head:[['Nº','Nome','Classe','Turma','Contacto']],body:rows,styles:{fontSize:8,cellPadding:3},headStyles:{fillColor:[204,27,43]},margin:{left:15,right:15}});
+    doc.save(`Devedores.pdf`);S.toast('PDF gerado!','success');
+};
+
+S._expFinXL = async function(){
+    try{const s=await db.collection('schools').doc(this.tid()).collection('finances').orderBy('createdAt','desc').get();
+    if(s.empty)return this.toast('Sem registos','warn');const d=[];
+    s.forEach(doc=>{const f=doc.data();d.push({Data:f.date,Tipo:f.type,Descrição:f.description,Serviço:f.service||f.category||'',Aluno:f.studentName||'',Valor:f.amount,Operador:f.operator||''})});
+    const ws=XLSX.utils.json_to_sheet(d);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Financeiro');
+    XLSX.writeFile(wb,`Financeiro_${new Date().toISOString().split('T')[0]}.xlsx`);this.toast('Exportado!','success')}catch(e){this.toast(e.message,'error')}
+};
+
+// Redirecionar funções antigas
+S.mdPayment = S._mdPay;
+S.mdExpense = S._mdExp;
+S.viewDebtors = S._viewDbt;
+S.mdFinConfig = S._mdFinConf;
+S.expFinXLSX = S._expFinXL;
+S.savePayment = S._savePay;
+S.saveExpense = S._saveExp;
+S.delFin = S._delFin;
+
+// =============================================
+// FIX: Recibo PDF (garantir que funciona)
+// =============================================
+S.genRecibo = async function(fid){
+    try{
+        const fDoc=await db.collection('schools').doc(this.tid()).collection('finances').doc(fid).get();
+        if(!fDoc.exists)return this.toast('Não encontrado','error');
+        const f=fDoc.data(),esc=this.school||{};
+        const{jsPDF}=window.jspdf;const doc=new jsPDF('p','mm','a4');
+        this._pdfHdr(doc,esc);
+
+        doc.setFontSize(16);doc.setFont('helvetica','bold');
+        doc.text('RECIBO DE PAGAMENTO',105,48,{align:'center'});
+        doc.setDrawColor(212,160,23);doc.setLineWidth(.4);doc.line(55,50,155,50);
+
+        doc.setFontSize(9);doc.setFont('helvetica','bold');
+        doc.text(`Nº: ${f.receiptNumber||fid.substring(0,10).toUpperCase()}`,170,42,{align:'right'});
+
+        let y=58;doc.setFontSize(10);doc.setFont('helvetica','normal');
+        [['Data:',f.date||'—'],['Recebemos de:',f.studentName||'—'],['Serviço:',f.service||f.description||'—'],
+         ['Mês Ref.:',f.month||'—'],['Parcela:',f.parcela||'Pagamento Único']].forEach(([l,v])=>{
+            doc.setFont('helvetica','bold');doc.text(l,25,y);
+            doc.setFont('helvetica','normal');doc.text(String(v),70,y);y+=6;
+        });
+
+        y+=4;
+        doc.setDrawColor(204,27,43);doc.setLineWidth(.5);doc.roundedRect(25,y,155,26,3,3);
+        doc.setFontSize(9);
+        doc.text('Valor Original:',30,y+7);doc.text(`${(f.originalAmount||f.amount||0).toLocaleString('pt-AO')} Kz`,120,y+7,{align:'right'});
+        if(f.discount){doc.text('Desconto:',30,y+13);doc.text(`- ${f.discount.toLocaleString('pt-AO')} Kz`,120,y+13,{align:'right'})}
+        if(f.multa){doc.text('Multa:',30,y+19);doc.text(`+ ${f.multa.toLocaleString('pt-AO')} Kz`,120,y+19,{align:'right'})}
+        doc.line(30,y+21,170,y+21);
+        doc.setFontSize(12);doc.setFont('helvetica','bold');doc.text('TOTAL:',30,y+26);
+        doc.setTextColor(5,150,105);doc.text(`${(f.amount||0).toLocaleString('pt-AO')} Kz`,170,y+26,{align:'right'});doc.setTextColor(0);
+
+        y+=34;doc.setFontSize(8);doc.setFont('helvetica','normal');
+        doc.text(`Operador: ${f.operator||'—'}`,25,y);
+        if(f.observation)doc.text(`Obs: ${f.observation}`,25,y+5);
+
+        y+=14;doc.setFontSize(9);
+        doc.text(`${esc.municipality||'Luanda'}, ${f.date||''}`,105,y,{align:'center'});
+        y+=10;doc.text('Assinatura:',30,y);doc.line(55,y,130,y);
+
+        await this.addQR(doc,`SGE|RECIBO|${f.receiptNumber||fid}|${f.amount}Kz|${f.studentName||''}`,150,y-14,24);
+
+        doc.save(`Recibo_${f.receiptNumber||fid.substring(0,8)}.pdf`);
+        this.toast('Recibo gerado!','success');
+    }catch(e){this.toast('Erro: '+e.message,'error')}
+};
+
+console.log('✅ Financeiro corrigido:');
+console.log('   - Filtro automático de alunos ao digitar');
+console.log('   - Devedores sem índice composto');
+console.log('   - Confirmação detalhada de pagamentos');
+console.log('   - Configs de valores funcionais');
+console.log('   - Recibo PDF funcional');
+</script>
+<!-- ================================================
+     FIM CORREÇÃO FINANCEIRO
+     ================================================ -->
+<!-- ================================================
+     DEVEDORES INTELIGENTES + RELATÓRIOS/STATS COMPLETOS
+     ================================================ -->
+<script>
+// =============================================
+// 1. DEVEDORES INTELIGENTES (baseado em config financeira)
+// =============================================
+S._viewDbt = async function(){
+    const tid = this.tid();
+    this.oModal('Lista de Devedores',
+        '<div id="dbtArea"><div class="fc" style="padding:20px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div><p class="tm mt-s fs-s">Calculando dívidas...</p></div></div>',
+        `<button class="btn btn-o" onclick="S.cModal()">Fechar</button>
+         <button class="btn btn-g btn-s" onclick="S._expDbtXL()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+         <button class="btn btn-r btn-s" onclick="S._expDbtPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>`,
+    '750px');
+
+    try {
+        // 1. Carregar configs financeiras
+        const configs = [];
+        try {
+            const cfgSnap = await db.collection('schools').doc(tid).collection('finConfig').get();
+            cfgSnap.forEach(d => configs.push(d.data()));
+        } catch(e){}
+
+        // 2. Carregar todos os estudantes
+        const studSnap = await db.collection('schools').doc(tid).collection('students').get();
+        const students = [];
+        studSnap.forEach(d => students.push({id: d.id, ...d.data()}));
+
+        // 3. Carregar todos os pagamentos (receitas)
+        const finSnap = await db.collection('schools').doc(tid).collection('finances')
+            .where('type', '==', 'receita').get();
+        
+        // Mapear pagamentos por aluno
+        const payments = {};
+        finSnap.forEach(d => {
+            const f = d.data();
+            const key = f.studentId || f.studentName || '';
+            if(!key) return;
+            if(!payments[key]) payments[key] = 0;
+            payments[key] += (f.amount || 0);
+        });
+
+        // Também mapear por nome (caso studentId não tenha sido guardado)
+        finSnap.forEach(d => {
+            const f = d.data();
+            if(f.studentName && !payments[f.studentName]){
+                payments[f.studentName] = 0;
+            }
+            if(f.studentName){
+                payments[f.studentName] = (payments[f.studentName] || 0);
+                // Evitar duplicação se já contou por ID
+                if(!f.studentId) payments[f.studentName] += (f.amount || 0);
+            }
+        });
+
+        // 4. Calcular valor devido por aluno
+        const debtors = [];
+
+        students.forEach(s => {
+            // Determinar valor esperado baseado nas configs
+            let expectedTotal = 0;
+
+            configs.forEach(cfg => {
+                // Verificar se config aplica a este aluno
+                const level = cfg.level || 'Todas';
+                let applies = false;
+
+                if(level === 'Todas') applies = true;
+                else if(level === 'Ensino Primário' && this.isPri(s.classe)) applies = true;
+                else if(level === 'I Ciclo'){
+                    const n = parseInt(s.classe); applies = n >= 7 && n <= 9;
+                }
+                else if(level === 'II Ciclo'){
+                    const n = parseInt(s.classe); applies = n >= 10 && n <= 13;
+                }
+                else if(level === s.classe) applies = true;
+
+                if(applies){
+                    const period = cfg.period || 'Mensal';
+                    let multiplier = 1;
+                    if(period === 'Mensal') multiplier = 10; // 10 meses lectivos
+                    else if(period === 'Trimestral') multiplier = 3;
+                    else if(period === 'Semestral') multiplier = 2;
+                    // Anual e Único = 1
+
+                    expectedTotal += (cfg.amount || 0) * multiplier;
+                }
+            });
+
+            if(expectedTotal <= 0) return; // Sem valor configurado
+
+            // Valor pago
+            const paid = payments[s.id] || payments[s.name] || 0;
+            const debt = expectedTotal - paid;
+
+            if(debt > 0){
+                debtors.push({
+                    ...s,
+                    expectedTotal,
+                    paid,
+                    debt
+                });
+            }
+        });
+
+        // Ordenar do maior devedor ao menor
+        debtors.sort((a, b) => b.debt - a.debt);
+
+        S._dbtData = debtors;
+
+        const el = document.getElementById('dbtArea');
+        if(!el) return;
+
+        if(debtors.length === 0){
+            if(configs.length === 0){
+                el.innerHTML = `<div class="tc" style="padding:20px">
+                    <span class="material-icons-outlined" style="font-size:1.8rem;color:#D4A017">settings</span>
+                    <p class="fw7 mt-s">Sem configuração financeira</p>
+                    <p class="tm fs-s mt-s">Configure os valores de pagamento primeiro (Propinas, Matrículas, etc.) para que o sistema possa calcular devedores.</p>
+                    <button class="btn btn-g btn-s mt-m" onclick="S.cModal();S._mdFinConf()">Configurar Valores</button>
+                </div>`;
+            } else {
+                el.innerHTML = '<div class="tc" style="padding:20px"><span class="material-icons-outlined" style="font-size:1.8rem;color:#059669">check_circle</span><p class="fw7 mt-s">Todos os pagamentos em dia!</p></div>';
+            }
+            return;
+        }
+
+        const totalDebt = debtors.reduce((a, b) => a + b.debt, 0);
+        const totalPaid = debtors.reduce((a, b) => a + b.paid, 0);
+
+        let h = `
+            <div class="g3 mb-m">
+                <div style="padding:10px;border-radius:8px;background:rgba(220,38,38,.05);border:1px solid rgba(220,38,38,.15);text-align:center">
+                    <p class="fw8" style="color:#DC2626;font-size:1.1rem">${debtors.length}</p>
+                    <p class="fs-s tm">Devedores</p>
+                </div>
+                <div style="padding:10px;border-radius:8px;background:rgba(220,38,38,.05);border:1px solid rgba(220,38,38,.15);text-align:center">
+                    <p class="fw8" style="color:#DC2626;font-size:1.1rem">${totalDebt.toLocaleString('pt-AO')} Kz</p>
+                    <p class="fs-s tm">Total em Dívida</p>
+                </div>
+                <div style="padding:10px;border-radius:8px;background:rgba(5,150,105,.05);border:1px solid rgba(5,150,105,.15);text-align:center">
+                    <p class="fw8" style="color:#059669;font-size:1.1rem">${totalPaid.toLocaleString('pt-AO')} Kz</p>
+                    <p class="fs-s tm">Total Pago</p>
+                </div>
+            </div>
+
+            <div class="ovx"><table class="tbl"><thead><tr>
+                <th>Pos.</th><th>Nome</th><th>Classe</th><th>Turma</th>
+                <th class="tc">Valor Devido</th><th class="tc">Valor Pago</th><th class="tc">Dívida</th><th>Tel. Enc.</th>
+            </tr></thead><tbody>`;
+
+        debtors.forEach((s, i) => {
+            const pctPaid = s.expectedTotal > 0 ? Math.round(s.paid / s.expectedTotal * 100) : 0;
+            h += `<tr>
+                <td class="fw8" style="color:${i<3?'#DC2626':'#6B7280'}">${i+1}º</td>
+                <td class="fw7 fs-s">${s.name || ''}</td>
+                <td>${s.classe || ''}</td>
+                <td>${s.turma || ''}</td>
+                <td class="tc fs-s">${s.expectedTotal.toLocaleString('pt-AO')} Kz</td>
+                <td class="tc fs-s" style="color:#059669">${s.paid.toLocaleString('pt-AO')} Kz</td>
+                <td class="tc fw8" style="color:#DC2626">${s.debt.toLocaleString('pt-AO')} Kz</td>
+                <td class="fs-s">${s.guardianPhone || '—'}</td>
+            </tr>`;
+        });
+
+        h += '</tbody></table></div>';
+        el.innerHTML = h;
+
+    } catch(e){
+        console.error('Erro devedores:', e);
+        document.getElementById('dbtArea').innerHTML = `<p class="tr fs-s">${e.message}</p>`;
+    }
+};
+
+S._expDbtXL = function(){
+    if(!S._dbtData || !S._dbtData.length) return S.toast('Sem dados','warn');
+    const d = [];
+    S._dbtData.forEach((s,i) => d.push({
+        'Posição': i+1, Nome: s.name, Classe: s.classe, Turma: s.turma||'',
+        'Valor Devido': s.expectedTotal, 'Valor Pago': s.paid, 'Dívida': s.debt,
+        'Tel. Encarregado': s.guardianPhone||''
+    }));
+    const ws = XLSX.utils.json_to_sheet(d);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Devedores');
+    XLSX.writeFile(wb, `Devedores_${new Date().toISOString().split('T')[0]}.xlsx`);
+    S.toast('Exportado!','success');
+};
+
+S._expDbtPDF = async function(){
+    if(!S._dbtData || !S._dbtData.length) return S.toast('Sem dados','warn');
+    const esc = S.school || {};
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('l','mm','a4'); // Landscape para mais colunas
+    S._pdfHdr(doc, esc);
+    doc.setFontSize(14); doc.setFont('helvetica','bold');
+    doc.text('LISTA DE DEVEDORES', 148, 46, {align:'center'});
+    
+    const totalDebt = S._dbtData.reduce((a,b) => a + b.debt, 0);
+    doc.setFontSize(9); doc.setFont('helvetica','normal');
+    doc.text(`${S._dbtData.length} devedores | Total em dívida: ${totalDebt.toLocaleString('pt-AO')} Kz`, 148, 52, {align:'center'});
+
+    const rows = S._dbtData.map((s,i) => [
+        i+1, s.name, s.classe, s.turma||'',
+        s.expectedTotal.toLocaleString('pt-AO')+' Kz',
+        s.paid.toLocaleString('pt-AO')+' Kz',
+        s.debt.toLocaleString('pt-AO')+' Kz',
+        s.guardianPhone||''
+    ]);
+
+    doc.autoTable({
+        startY: 56,
+        head: [['Pos.','Nome','Classe','Turma','Valor Devido','Valor Pago','Dívida','Tel. Enc.']],
+        body: rows,
+        styles: {fontSize:7.5, cellPadding:2.5},
+        headStyles: {fillColor:[204,27,43]},
+        margin: {left:10, right:10},
+        didParseCell: function(data){
+            if(data.section==='body' && data.column.index===6){
+                data.cell.styles.fontStyle='bold';
+                data.cell.styles.textColor=[220,38,38];
+            }
+        }
+    });
+
+    doc.save(`Devedores_${new Date().toISOString().split('T')[0]}.pdf`);
+    S.toast('PDF gerado!','success');
+};
+
+// Redirecionar
+S.viewDebtors = S._viewDbt;
+
+// =============================================
+// 2. RELATÓRIOS COMPLETOS COM DOWNLOAD
+// =============================================
+S._routes['school-reports'] = async function(){
+    if(!this.hasRole('diretor','super_admin')) return this.pgAccessDenied();
+    const pc = document.getElementById('pgC'), tid = this.tid();
+    if(!tid) return;
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Relatórios da Escola</h2><p class="tm fs-s">Dados completos por classe, turma, género e estado</p></div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap">
+                <button class="btn btn-g btn-s" onclick="S._expRepPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>Relatório PDF</button>
+                <button class="btn btn-o btn-s" onclick="S._expRepXL()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX Completo</button>
+                <button class="btn btn-r btn-s" onclick="S._expRepStudNotas()"><span class="material-icons-outlined" style="font-size:.85rem">grading</span>Alunos + Notas XLSX</button>
+            </div>
+        </div>
+        <div id="repArea"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div>
+    </div>`;
+
+    try {
+        const studSnap = await db.collection('schools').doc(tid).collection('students').get();
+        const staffSnap = await db.collection('schools').doc(tid).collection('staff').get();
+
+        let tot=0, m=0, f=0;
+        const clMap={}, stMap={}, tnMap={}, tmMap={};
+        const students = [];
+
+        studSnap.forEach(d => {
+            const s = d.data(); students.push({id:d.id,...s});
+            tot++; if(s.sex==='Masculino')m++;else f++;
+            clMap[s.classe||'N/D']=(clMap[s.classe||'N/D']||0)+1;
+            stMap[s.status||'Activo']=(stMap[s.status||'Activo']||0)+1;
+            tnMap[s.turno||'N/D']=(tnMap[s.turno||'N/D']||0)+1;
+            const key=`${s.classe||'?'}-${s.turma||'?'}`;
+            if(!tmMap[key])tmMap[key]={classe:s.classe,turma:s.turma,total:0,m:0,f:0};
+            tmMap[key].total++;if(s.sex==='Masculino')tmMap[key].m++;else tmMap[key].f++;
+        });
+
+        S._repStudents = students;
+        S._repStaff = [];
+        staffSnap.forEach(d => S._repStaff.push({id:d.id,...d.data()}));
+
+        const el = document.getElementById('repArea');
+        el.innerHTML = `
+            <!-- Stats -->
+            <div class="g4 mb-l">
+                <div class="stc"><div class="st-ic" style="background:rgba(204,27,43,.08);color:#CC1B2B"><span class="material-icons-outlined">people</span></div><div><div class="st-v">${tot}</div><div class="st-l">Estudantes</div></div></div>
+                <div class="stc"><div class="st-ic" style="background:rgba(59,130,246,.08);color:#3B82F6"><span class="material-icons-outlined">man</span></div><div><div class="st-v">${m}</div><div class="st-l">Masculinos</div></div></div>
+                <div class="stc"><div class="st-ic" style="background:rgba(236,72,153,.08);color:#EC4899"><span class="material-icons-outlined">woman</span></div><div><div class="st-v">${f}</div><div class="st-l">Femininos</div></div></div>
+                <div class="stc"><div class="st-ic" style="background:rgba(5,150,105,.08);color:#059669"><span class="material-icons-outlined">badge</span></div><div><div class="st-v">${staffSnap.size}</div><div class="st-l">Funcionários</div></div></div>
+            </div>
+
+            <!-- Por Estado -->
+            <div class="cd mb-l">
+                <h3 class="fw7 fs-m mb-m">Por Estado Académico</h3>
+                <div class="g4">${Object.entries(stMap).map(([st,n])=>{
+                    const cols={'Activo':'#059669','Aprovado':'#059669','Reprovado':'#DC2626','Transferido':'#F59E0B','Desistente':'#DC2626','Suspenso':'#6B7280','Finalista':'#2563EB'};
+                    return`<div class="stc" style="border-left:3px solid ${cols[st]||'#6B7280'}"><div><div class="st-v" style="color:${cols[st]||'#6B7280'}">${n}</div><div class="st-l">${st}</div></div></div>`;
+                }).join('')}</div>
+            </div>
+
+            <!-- Gráficos -->
+            <div class="g2 mb-l">
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Por Classe</h3><canvas id="rpc1" height="220"></canvas></div>
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Por Estado</h3><canvas id="rpc2" height="220"></canvas></div>
+            </div>
+            <div class="g2 mb-l">
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Género</h3><canvas id="rpc3" height="180"></canvas></div>
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Por Turno</h3><canvas id="rpc4" height="180"></canvas></div>
+            </div>
+
+            <!-- Tabela por Classe/Turma -->
+            <div class="cd mb-l">
+                <h3 class="fw7 fs-m mb-m">Detalhes por Classe e Turma</h3>
+                <div class="ovx"><table class="tbl"><thead><tr><th>Classe</th><th>Turma</th><th>Total</th><th>Masc.</th><th>Fem.</th><th>%</th></tr></thead><tbody>
+                ${Object.values(tmMap).sort((a,b)=>(a.classe||'').localeCompare(b.classe||'')||((a.turma||'').localeCompare(b.turma||''))).map(t=>
+                    `<tr><td class="fw7">${t.classe||''}</td><td><span class="bg bg-in">${t.turma||''}</span></td><td class="fw8">${t.total}</td><td>${t.m}</td><td>${t.f}</td>
+                    <td><div style="display:flex;align-items:center;gap:5px"><div style="width:${tot>0?Math.round(t.total/tot*100):0}%;max-width:120px;height:4px;background:#CC1B2B;border-radius:2px"></div><span class="fs-s">${tot>0?Math.round(t.total/tot*100):0}%</span></div></td></tr>`
+                ).join('')}
+                </tbody></table></div>
+            </div>
+        `;
+
+        // Charts
+        const cls=['#CC1B2B','#D4A017','#059669','#2563EB','#7C3AED','#EC4899','#F59E0B','#10B981','#6366F1','#EF4444','#8B5CF6','#14B8A6'];
+        setTimeout(()=>{
+            try{new Chart(document.getElementById('rpc1'),{type:'bar',data:{labels:Object.keys(clMap),datasets:[{label:'Alunos',data:Object.values(clMap),backgroundColor:cls}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}})}catch(e){}
+            try{new Chart(document.getElementById('rpc2'),{type:'doughnut',data:{labels:Object.keys(stMap),datasets:[{data:Object.values(stMap),backgroundColor:cls,borderWidth:0}]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}})}catch(e){}
+            try{new Chart(document.getElementById('rpc3'),{type:'pie',data:{labels:['Masculino','Feminino'],datasets:[{data:[m,f],backgroundColor:['#3B82F6','#EC4899'],borderWidth:0}]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}})}catch(e){}
+            try{new Chart(document.getElementById('rpc4'),{type:'bar',data:{labels:Object.keys(tnMap),datasets:[{label:'Alunos',data:Object.values(tnMap),backgroundColor:['#D4A017','#CC1B2B','#2563EB']}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}})}catch(e){}
+        },300);
+
+    } catch(e){ document.getElementById('repArea').innerHTML=`<p class="tr">${e.message}</p>`; }
+};
+
+// XLSX com alunos + notas
+S._expRepStudNotas = async function(){
+    const tid = this.tid();
+    const students = S._repStudents || [];
+    if(!students.length) return this.toast('Sem dados','warn');
+
+    this.toast('Gerando XLSX com notas (pode demorar)...','info',3000);
+
+    const wb = XLSX.utils.book_new();
+
+    // Agrupar por classe
+    const byClass = {};
+    students.forEach(s => {
+        if(!byClass[s.classe]) byClass[s.classe] = [];
+        byClass[s.classe].push(s);
+    });
+
+    for(const [classe, studs] of Object.entries(byClass)){
+        const discs = this.DISC[classe] || [];
+        const data = [];
+
+        for(const s of studs){
+            const row = {
+                'Nome': s.name, 'Sexo': s.sex, 'Classe': s.classe,
+                'Turma': s.turma, 'Turno': s.turno, 'Processo': s.process,
+                'Estado': s.status
+            };
+
+            // Carregar notas
+            for(const disc of discs){
+                const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+                let mts = [];
+                for(let t=1;t<=3;t++){
+                    try{
+                        const g = await db.collection('schools').doc(tid).collection('grades')
+                            .doc(`${s.id}_${t}_${dk}`).get();
+                        if(g.exists && g.data().mt != null){
+                            row[`${disc} T${t}`] = g.data().mt;
+                            mts.push(g.data().mt);
+                        }
+                    }catch(e){}
+                }
+                if(mts.length > 0){
+                    row[`${disc} MF`] = Math.round(mts.reduce((a,b)=>a+b,0)/mts.length);
+                }
+            }
+
+            data.push(row);
+        }
+
+        const ws = XLSX.utils.json_to_sheet(data);
+        XLSX.utils.book_append_sheet(wb, ws, classe.substring(0,31));
+    }
+
+    XLSX.writeFile(wb, `Relatorio_Notas_${new Date().toISOString().split('T')[0]}.xlsx`);
+    this.toast('XLSX com notas exportado!','success');
+};
+
+// XLSX simples
+S._expRepXL = function(){
+    const students = S._repStudents || [];
+    const staff = S._repStaff || [];
+    if(!students.length) return S.toast('Sem dados','warn');
+
+    const wb = XLSX.utils.book_new();
+
+    // Aba estudantes
+    const studData = students.map((s,i) => ({
+        'Nº':i+1, Nome:s.name, Sexo:s.sex, Nascimento:s.dob,
+        BI:s.bi, Classe:s.classe, Turma:s.turma, Turno:s.turno,
+        Processo:s.process, Estado:s.status, Pai:s.fatherName,
+        Mãe:s.motherName, Encarregado:s.guardian, 'Tel.Enc.':s.guardianPhone
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(studData), 'Estudantes');
+
+    // Aba funcionários
+    if(staff.length){
+        const staffData = staff.map((f,i) => ({
+            'Nº':i+1, Nome:f.name, Sexo:f.sex, Cargo:f.cargo,
+            Dept:f.department, Tel:f.phone, Turno:f.shift
+        }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(staffData), 'Funcionários');
+    }
+
+    XLSX.writeFile(wb, `Relatorio_${new Date().toISOString().split('T')[0]}.xlsx`);
+    S.toast('Exportado!','success');
+};
+
+// PDF relatório
+S._expRepPDF = async function(){
+    const esc = S.school || {};
+    const students = S._repStudents || [];
+    if(!students.length) return S.toast('Sem dados','warn');
+
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('l','mm','a4');
+
+    S._pdfHdr(doc, esc);
+    doc.setFontSize(14);doc.setFont('helvetica','bold');
+    doc.text('RELATÓRIO ESTATÍSTICO',148,46,{align:'center'});
+
+    let tot=0,m=0,f=0;const clMap={},stMap={},tmMap={};
+    students.forEach(s=>{
+        tot++;if(s.sex==='Masculino')m++;else f++;
+        clMap[s.classe||'N/D']=(clMap[s.classe||'N/D']||0)+1;
+        stMap[s.status||'Activo']=(stMap[s.status||'Activo']||0)+1;
+        const k=`${s.classe||'?'}-${s.turma||'?'}`;
+        if(!tmMap[k])tmMap[k]={cl:s.classe,tm:s.turma,t:0,m:0,f:0};
+        tmMap[k].t++;if(s.sex==='Masculino')tmMap[k].m++;else tmMap[k].f++;
+    });
+
+    doc.setFontSize(10);doc.setFont('helvetica','normal');
+    doc.text(`Total: ${tot} | Masculinos: ${m} | Femininos: ${f}`,20,54);
+
+    // Tabela por classe/turma
+    const rows = Object.values(tmMap).sort((a,b)=>(a.cl||'').localeCompare(b.cl||'')).map(t=>
+        [t.cl, t.tm||'', t.t, t.m, t.f, tot>0?Math.round(t.t/tot*100)+'%':'0%']
+    );
+
+    doc.autoTable({
+        startY:58,
+        head:[['Classe','Turma','Total','Masc.','Fem.','%']],
+        body:rows,
+        styles:{fontSize:8,cellPadding:3},
+        headStyles:{fillColor:[204,27,43]},
+        margin:{left:15,right:150}
+    });
+
+    // Tabela por estado
+    const stRows = Object.entries(stMap).map(([s,n])=>[s,n,tot>0?Math.round(n/tot*100)+'%':'0%']);
+    doc.autoTable({
+        startY:58,
+        head:[['Estado','Total','%']],
+        body:stRows,
+        styles:{fontSize:8,cellPadding:3},
+        headStyles:{fillColor:[26,26,26],textColor:[212,160,23]},
+        margin:{left:160,right:15}
+    });
+
+    const fy = Math.max(doc.lastAutoTable.finalY,120)+8;
+    doc.setFontSize(8);
+    doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`,148,fy,{align:'center'});
+    await S.addQR(doc,`SGE|REP|${esc.name||''}|${tot}`,250,fy-8,20);
+
+    doc.save(`Relatorio_${new Date().toISOString().split('T')[0]}.pdf`);
+    S.toast('PDF gerado!','success');
+};
+
+// =============================================
+// 3. ESTATÍSTICAS COM DOWNLOAD PDF/XLSX
+// =============================================
+S._routes['global-stats'] = async function(){
+    if(!this.hasRole('super_admin')) return this.pgAccessDenied();
+    const pc = document.getElementById('pgC');
+    pc.innerHTML = `<div class="fade"><h2 class="fw8 fs-l mb-l">Estatísticas do Sistema</h2>
+        <div style="display:flex;gap:5px;margin-bottom:16px">
+            <button class="btn btn-g btn-s" onclick="S._expStatsPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>
+            <button class="btn btn-o btn-s" onclick="S._expStatsXL()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+        </div>
+        <div id="gsArea"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div>
+    </div>`;
+
+    try{
+        const schSnap=await db.collection('schools').get(),uSnap=await db.collection('users').get();
+        const pvMap={},tpMap={},rlMap={};
+        const schoolStats = [];
+
+        for(const sch of schSnap.docs){
+            const sd = sch.data();
+            pvMap[sd.province||'N/D']=(pvMap[sd.province||'N/D']||0)+1;
+            tpMap[sd.type||'N/D']=(tpMap[sd.type||'N/D']||0)+1;
+
+            let sc=0,sf=0;
+            try{sc=(await db.collection('schools').doc(sch.id).collection('students').get()).size}catch(e){}
+            try{sf=(await db.collection('schools').doc(sch.id).collection('staff').get()).size}catch(e){}
+            schoolStats.push({name:sd.name,province:sd.province,type:sd.type,students:sc,staff:sf,active:sd.active});
+        }
+
+        uSnap.forEach(d=>{const u=d.data();rlMap[S.RL[u.role]||u.role||'N/D']=(rlMap[S.RL[u.role]||u.role||'N/D']||0)+1});
+
+        S._statsData = {pvMap,tpMap,rlMap,schoolStats,totalSchools:schSnap.size,totalUsers:uSnap.size};
+
+        const el=document.getElementById('gsArea');
+        el.innerHTML=`
+            <div class="g4 mb-l">
+                <div class="stc"><div class="st-ic" style="background:rgba(204,27,43,.08);color:#CC1B2B"><span class="material-icons-outlined">account_balance</span></div><div><div class="st-v">${schSnap.size}</div><div class="st-l">Escolas</div></div></div>
+                <div class="stc"><div class="st-ic" style="background:rgba(212,160,23,.08);color:#D4A017"><span class="material-icons-outlined">group</span></div><div><div class="st-v">${uSnap.size}</div><div class="st-l">Utilizadores</div></div></div>
+                <div class="stc"><div class="st-ic" style="background:rgba(5,150,105,.08);color:#059669"><span class="material-icons-outlined">map</span></div><div><div class="st-v">${Object.keys(pvMap).length}</div><div class="st-l">Províncias</div></div></div>
+                <div class="stc"><div class="st-ic" style="background:rgba(37,99,235,.08);color:#2563EB"><span class="material-icons-outlined">people</span></div><div><div class="st-v">${schoolStats.reduce((a,b)=>a+b.students,0)}</div><div class="st-l">Estudantes Total</div></div></div>
+            </div>
+            <div class="g3 mb-l">
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Por Província</h3><canvas id="gs1" height="200"></canvas></div>
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Por Tipo</h3><canvas id="gs2" height="200"></canvas></div>
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Por Cargo</h3><canvas id="gs3" height="200"></canvas></div>
+            </div>
+            <div class="cd"><h3 class="fw7 fs-m mb-m">Ranking de Escolas</h3>
+                <div class="ovx"><table class="tbl"><thead><tr><th>Pos.</th><th>Escola</th><th>Província</th><th>Tipo</th><th>Estudantes</th><th>Funcionários</th><th>Estado</th></tr></thead><tbody>
+                ${schoolStats.sort((a,b)=>b.students-a.students).map((s,i)=>`<tr><td class="fw8" style="color:${i<3?'#D4A017':'#6B7280'}">${i+1}º</td><td class="fw7 fs-s">${s.name||''}</td><td>${s.province||''}</td><td class="fs-s">${s.type||''}</td><td class="fw8">${s.students}</td><td>${s.staff}</td><td><span class="bg ${s.active!==false?'bg-ok':'bg-er'}">${s.active!==false?'Activa':'Inactiva'}</span></td></tr>`).join('')}
+                </tbody></table></div>
+            </div>
+        `;
+
+        const cls=['#CC1B2B','#D4A017','#059669','#2563EB','#7C3AED','#EC4899','#F59E0B','#10B981','#6366F1','#EF4444'];
+        setTimeout(()=>{
+            try{new Chart(document.getElementById('gs1'),{type:'bar',data:{labels:Object.keys(pvMap),datasets:[{data:Object.values(pvMap),backgroundColor:cls}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}})}catch(e){}
+            try{new Chart(document.getElementById('gs2'),{type:'doughnut',data:{labels:Object.keys(tpMap),datasets:[{data:Object.values(tpMap),backgroundColor:cls,borderWidth:0}]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}})}catch(e){}
+            try{new Chart(document.getElementById('gs3'),{type:'pie',data:{labels:Object.keys(rlMap),datasets:[{data:Object.values(rlMap),backgroundColor:cls,borderWidth:0}]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}})}catch(e){}
+        },300);
+    }catch(e){document.getElementById('gsArea').innerHTML=`<p class="tr">${e.message}</p>`}
+};
+
+S._expStatsPDF = async function(){
+    const d = S._statsData; if(!d) return S.toast('Sem dados','warn');
+    const {jsPDF}=window.jspdf;const doc=new jsPDF('l','mm','a4');
+    doc.setFontSize(14);doc.setFont('helvetica','bold');
+    doc.text('SGE-NG — ESTATÍSTICAS DO SISTEMA',148,16,{align:'center'});
+    doc.setFontSize(9);doc.setFont('helvetica','normal');
+    doc.text(`${d.totalSchools} Escolas | ${d.totalUsers} Utilizadores | ${d.schoolStats.reduce((a,b)=>a+b.students,0)} Estudantes | ${new Date().toLocaleDateString('pt-AO')}`,148,22,{align:'center'});
+
+    // Tabela escolas
+    const rows=d.schoolStats.sort((a,b)=>b.students-a.students).map((s,i)=>[i+1,s.name,s.province,s.type,s.students,s.staff,s.active!==false?'Activa':'Inactiva']);
+    doc.autoTable({startY:28,head:[['Pos.','Escola','Província','Tipo','Estudantes','Staff','Estado']],body:rows,styles:{fontSize:7,cellPadding:2},headStyles:{fillColor:[204,27,43]},margin:{left:10,right:10}});
+
+    // Tabela províncias
+    const fy=doc.lastAutoTable.finalY+8;
+    const pvRows=Object.entries(d.pvMap).sort((a,b)=>b[1]-a[1]).map(([p,n])=>[p,n]);
+    doc.autoTable({startY:fy,head:[['Província','Escolas']],body:pvRows,styles:{fontSize:8,cellPadding:3},headStyles:{fillColor:[26,26,26],textColor:[212,160,23]},margin:{left:10,right:200}});
+
+    doc.save(`Estatisticas_SGE_${new Date().toISOString().split('T')[0]}.pdf`);
+    S.toast('PDF gerado!','success');
+};
+
+S._expStatsXL = function(){
+    const d = S._statsData; if(!d) return S.toast('Sem dados','warn');
+    const wb=XLSX.utils.book_new();
+
+    // Escolas
+    const schData=d.schoolStats.map((s,i)=>({'Pos.':i+1,Escola:s.name,Província:s.province,Tipo:s.type,Estudantes:s.students,Funcionários:s.staff,Estado:s.active!==false?'Activa':'Inactiva'}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(schData),'Escolas');
+
+    // Províncias
+    const pvData=Object.entries(d.pvMap).map(([p,n])=>({Província:p,Escolas:n}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(pvData),'Províncias');
+
+    // Tipos
+    const tpData=Object.entries(d.tpMap).map(([t,n])=>({Tipo:t,Escolas:n}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(tpData),'Tipos');
+
+    // Cargos
+    const rlData=Object.entries(d.rlMap).map(([r,n])=>({Cargo:r,Total:n}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rlData),'Utilizadores');
+
+    XLSX.writeFile(wb,`Estatisticas_${new Date().toISOString().split('T')[0]}.xlsx`);
+    S.toast('XLSX exportado!','success');
+};
+
+console.log('✅ Devedores inteligentes (baseado em config financeira)');
+console.log('✅ Relatórios com download PDF/XLSX + notas');
+console.log('✅ Estatísticas com download PDF/XLSX');
+</script>
+<!-- ================================================
+     FIM DEVEDORES + RELATÓRIOS + STATS
+     ================================================ -->
+<!-- ================================================
+     ESTATÍSTICAS POR ESCOLA — Completas
+     ================================================ -->
+<script>
+// =============================================
+// ADICIONAR MENU ESTATÍSTICAS PARA MAIS PERFIS
+// =============================================
+(function(){
+    const origMenu = S.getMenu;
+    S.getMenu = function(role){
+        const m = origMenu.call(this, role);
+        
+        // Adicionar Estatísticas para subdirectores e secretaria
+        if(role === 'subdiretor_pedagogico'){
+            m.push({s:'RELATÓRIOS',p:'school-stats',i:'analytics',l:'Estatísticas'});
+        }
+        if(role === 'subdiretor_administrativo'){
+            m.push({s:'RELATÓRIOS',p:'school-stats',i:'analytics',l:'Estatísticas'});
+        }
+        if(role === 'secretaria'){
+            m.push({s:'RELATÓRIOS',p:'school-stats',i:'analytics',l:'Estatísticas'});
+        }
+        if(role === 'professor'){
+            // Professor vê apenas suas estatísticas
+            m.push({s:'RELATÓRIOS',p:'prof-stats',i:'analytics',l:'Minhas Estatísticas'});
+        }
+
+        // Director já tem school-reports, adicionar school-stats
+        if(role === 'diretor'){
+            // Verificar se já não existe
+            if(!m.find(i => i.p === 'school-stats')){
+                const repIdx = m.findIndex(i => i.p === 'school-reports');
+                if(repIdx >= 0){
+                    m.splice(repIdx + 1, 0, {s:'ACADÉMICO',p:'school-stats',i:'analytics',l:'Estatísticas'});
+                } else {
+                    m.push({s:'RELATÓRIOS',p:'school-stats',i:'analytics',l:'Estatísticas'});
+                }
+            }
+        }
+
+        return m;
+    };
+})();
+
+// Registar rotas
+S._routes['school-stats'] = function(){ S.pgSchoolStats(); };
+S._routes['prof-stats'] = function(){ S.pgProfStats(); };
+S._titles['school-stats'] = 'Estatísticas da Escola';
+S._titles['prof-stats'] = 'Minhas Estatísticas';
+
+// =============================================
+// ESTATÍSTICAS DA ESCOLA (Director, SubDir, Secretaria)
+// =============================================
+S.pgSchoolStats = async function(){
+    if(!this.hasRole('diretor','subdiretor_pedagogico','subdiretor_administrativo','secretaria','super_admin'))
+        return this.pgAccessDenied();
+
+    const pc = document.getElementById('pgC');
+    const tid = this.tid();
+    if(!tid) return pc.innerHTML = '<div class="fade cd tc" style="padding:40px"><p class="tr">Escola não definida</p></div>';
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Estatísticas da Escola</h2>
+            <p class="tm fs-s">Matriculados, avaliados, aprovados, reprovados por classe e turma</p></div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap">
+                <button class="btn btn-g btn-s" onclick="S._expSchStatsPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>
+                <button class="btn btn-o btn-s" onclick="S._expSchStatsXL()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+            </div>
+        </div>
+
+        <!-- Filtro período -->
+        <div class="cd mb-l">
+            <div class="g3">
+                <div class="fg"><label class="fl">Período</label>
+                    <select id="stPeriod" class="fs" onchange="S._loadSchStats()">
+                        <option value="anual">Anual (Todos Trimestres)</option>
+                        <option value="1">1º Trimestre</option>
+                        <option value="2">2º Trimestre</option>
+                        <option value="3">3º Trimestre</option>
+                    </select>
+                </div>
+                <div class="fg"><label class="fl">Classe</label>
+                    <select id="stClass" class="fs" onchange="S._loadSchStats()">
+                        <option value="">Todas as Classes</option>
+                        ${(this.school?this.clsFor(this.school.type):this.allCls()).map(c=>`<option value="${c}">${c}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="fg" style="display:flex;align-items:flex-end">
+                    <button class="btn btn-r" onclick="S._loadSchStats()" style="width:100%">
+                        <span class="material-icons-outlined">analytics</span>Actualizar
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="schStatsArea"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div>
+    </div>`;
+
+    this._loadSchStats();
+};
+
+S._loadSchStats = async function(){
+    const tid = this.tid();
+    const period = document.getElementById('stPeriod')?.value || 'anual';
+    const filterClass = document.getElementById('stClass')?.value || '';
+    const area = document.getElementById('schStatsArea');
+    if(!area) return;
+
+    area.innerHTML = '<div class="fc" style="padding:20px"><div class="ld-spin" style="width:24px;height:24px;border-width:2px"></div></div>';
+
+    try {
+        // Carregar estudantes
+        const studSnap = await db.collection('schools').doc(tid).collection('students').get();
+        const allStudents = [];
+        studSnap.forEach(d => allStudents.push({id:d.id,...d.data()}));
+
+        const students = filterClass 
+            ? allStudents.filter(s => s.classe === filterClass)
+            : allStudents;
+
+        // Carregar notas para determinar avaliados/aprovados/reprovados
+        const gradesByStudent = {};
+
+        for(const s of students){
+            const discs = this.DISC[s.classe] || [];
+            const pg = this.passG(s.classe);
+            let totalMT = 0, countMT = 0, negativas = 0;
+
+            for(const disc of discs){
+                const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+
+                if(period === 'anual'){
+                    // Média dos 3 trimestres
+                    let mts = [];
+                    for(let t=1;t<=3;t++){
+                        try{
+                            const g = await db.collection('schools').doc(tid).collection('grades')
+                                .doc(`${s.id}_${t}_${dk}`).get();
+                            if(g.exists && g.data().mt != null) mts.push(g.data().mt);
+                        }catch(e){}
+                    }
+                    if(mts.length > 0){
+                        const avg = Math.round(mts.reduce((a,b)=>a+b,0)/mts.length);
+                        totalMT += avg;
+                        countMT++;
+                        if(avg < pg) negativas++;
+                    }
+                } else {
+                    // Trimestre específico
+                    try{
+                        const g = await db.collection('schools').doc(tid).collection('grades')
+                            .doc(`${s.id}_${period}_${dk}`).get();
+                        if(g.exists && g.data().mt != null){
+                            totalMT += g.data().mt;
+                            countMT++;
+                            if(g.data().mt < pg) negativas++;
+                        }
+                    }catch(e){}
+                }
+            }
+
+            gradesByStudent[s.id] = {
+                evaluated: countMT > 0,
+                totalMT, countMT, negativas,
+                average: countMT > 0 ? Math.round(totalMT/countMT) : null,
+                passed: countMT > 0 && negativas <= 2 // Simplificado
+            };
+        }
+
+        // Calcular estatísticas
+        const stats = {
+            total: students.length,
+            masculine: students.filter(s=>s.sex==='Masculino').length,
+            feminine: students.filter(s=>s.sex==='Feminino').length,
+            evaluated: 0,
+            notEvaluated: 0,
+            approved: 0,
+            failed: 0,
+            transferred: students.filter(s=>s.status==='Transferido'||s.status==='Transferida').length,
+            desisted: students.filter(s=>s.status==='Desistente').length,
+            byClass: {},
+            byClassTurma: {}
+        };
+
+        students.forEach(s => {
+            const g = gradesByStudent[s.id];
+            if(g && g.evaluated){
+                stats.evaluated++;
+                if(g.passed) stats.approved++;
+                else stats.failed++;
+            } else {
+                stats.notEvaluated++;
+            }
+
+            // Por classe
+            const cl = s.classe || 'N/D';
+            if(!stats.byClass[cl]) stats.byClass[cl] = {total:0,m:0,f:0,eval:0,appr:0,fail:0,transf:0,desist:0};
+            const cc = stats.byClass[cl];
+            cc.total++;
+            if(s.sex==='Masculino') cc.m++; else cc.f++;
+            if(g?.evaluated){ cc.eval++; if(g.passed) cc.appr++; else cc.fail++; }
+            if(s.status==='Transferido'||s.status==='Transferida') cc.transf++;
+            if(s.status==='Desistente') cc.desist++;
+
+            // Por classe+turma
+            const key = `${cl}|${s.turma||'?'}`;
+            if(!stats.byClassTurma[key]) stats.byClassTurma[key] = {classe:cl,turma:s.turma||'?',total:0,m:0,f:0,eval:0,appr:0,fail:0,transf:0,desist:0};
+            const ct = stats.byClassTurma[key];
+            ct.total++;
+            if(s.sex==='Masculino') ct.m++; else ct.f++;
+            if(g?.evaluated){ ct.eval++; if(g.passed) ct.appr++; else ct.fail++; }
+            if(s.status==='Transferido'||s.status==='Transferida') ct.transf++;
+            if(s.status==='Desistente') ct.desist++;
+        });
+
+        S._schStatsData = stats;
+
+        // Renderizar
+        const periodLabel = period==='anual'?'Anual':`${period}º Trimestre`;
+
+        let html = `
+            <!-- Cards gerais -->
+            <div class="g4 mb-l">
+                <div class="stc" style="border-left:3px solid #2563EB"><div><div class="st-v" style="color:#2563EB">${stats.total}</div><div class="st-l">Matriculados</div></div></div>
+                <div class="stc" style="border-left:3px solid #D4A017"><div><div class="st-v" style="color:#D4A017">${stats.evaluated}</div><div class="st-l">Avaliados</div></div></div>
+                <div class="stc" style="border-left:3px solid #059669"><div><div class="st-v" style="color:#059669">${stats.approved}</div><div class="st-l">Aprovados</div></div></div>
+                <div class="stc" style="border-left:3px solid #DC2626"><div><div class="st-v" style="color:#DC2626">${stats.failed}</div><div class="st-l">Reprovados</div></div></div>
+            </div>
+            <div class="g4 mb-l">
+                <div class="stc" style="border-left:3px solid #F59E0B"><div><div class="st-v" style="color:#F59E0B">${stats.transferred}</div><div class="st-l">Transferidos</div></div></div>
+                <div class="stc" style="border-left:3px solid #6B7280"><div><div class="st-v" style="color:#6B7280">${stats.desisted}</div><div class="st-l">Desistentes</div></div></div>
+                <div class="stc" style="border-left:3px solid #3B82F6"><div><div class="st-v" style="color:#3B82F6">${stats.masculine}</div><div class="st-l">Masculinos</div></div></div>
+                <div class="stc" style="border-left:3px solid #EC4899"><div><div class="st-v" style="color:#EC4899">${stats.feminine}</div><div class="st-l">Femininos</div></div></div>
+            </div>
+
+            <!-- Gráficos -->
+            <div class="g2 mb-l">
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Situação Académica — ${periodLabel}</h3><canvas id="ssc1" height="200"></canvas></div>
+                <div class="cd"><h3 class="fw7 fs-m mb-m">Por Classe</h3><canvas id="ssc2" height="200"></canvas></div>
+            </div>
+
+            <!-- Tabela por Classe -->
+            <div class="cd mb-l">
+                <h3 class="fw7 fs-m mb-m">Estatística por Classe — ${periodLabel}</h3>
+                <div class="ovx"><table class="tbl">
+                    <thead><tr style="background:linear-gradient(135deg,#161616,#2D1515)">
+                        <th>Classe</th><th class="tc">Matric.</th><th class="tc">Masc.</th><th class="tc">Fem.</th>
+                        <th class="tc" style="color:#D4A017">Avaliados</th>
+                        <th class="tc" style="color:#059669">Aprovados</th>
+                        <th class="tc" style="color:#DC2626">Reprovados</th>
+                        <th class="tc">Transf.</th><th class="tc">Desist.</th>
+                        <th class="tc" style="color:#D4A017">% Aprov.</th>
+                    </tr></thead>
+                    <tbody>
+                    ${Object.entries(stats.byClass).sort((a,b)=>a[0].localeCompare(b[0])).map(([cl,c])=>{
+                        const pctAppr = c.eval>0?Math.round(c.appr/c.eval*100):0;
+                        return`<tr>
+                            <td class="fw8">${cl}</td>
+                            <td class="tc fw7">${c.total}</td>
+                            <td class="tc">${c.m}</td><td class="tc">${c.f}</td>
+                            <td class="tc fw7" style="color:#D4A017">${c.eval}</td>
+                            <td class="tc fw7" style="color:#059669">${c.appr}</td>
+                            <td class="tc fw7" style="color:#DC2626">${c.fail}</td>
+                            <td class="tc">${c.transf}</td><td class="tc">${c.desist}</td>
+                            <td class="tc"><div style="display:flex;align-items:center;gap:4px;justify-content:center">
+                                <div style="width:40px;height:4px;background:#E5E7EB;border-radius:2px;overflow:hidden"><div style="width:${pctAppr}%;height:100%;background:${pctAppr>=60?'#059669':'#DC2626'};border-radius:2px"></div></div>
+                                <span class="fs-s fw7" style="color:${pctAppr>=60?'#059669':'#DC2626'}">${pctAppr}%</span>
+                            </div></td>
+                        </tr>`;
+                    }).join('')}
+                    <tr style="background:rgba(212,160,23,.08)">
+                        <td class="fw8">TOTAL</td>
+                        <td class="tc fw8">${stats.total}</td>
+                        <td class="tc fw7">${stats.masculine}</td><td class="tc fw7">${stats.feminine}</td>
+                        <td class="tc fw8" style="color:#D4A017">${stats.evaluated}</td>
+                        <td class="tc fw8" style="color:#059669">${stats.approved}</td>
+                        <td class="tc fw8" style="color:#DC2626">${stats.failed}</td>
+                        <td class="tc fw7">${stats.transferred}</td><td class="tc fw7">${stats.desisted}</td>
+                        <td class="tc fw8" style="color:${stats.evaluated>0&&Math.round(stats.approved/stats.evaluated*100)>=60?'#059669':'#DC2626'}">${stats.evaluated>0?Math.round(stats.approved/stats.evaluated*100):0}%</td>
+                    </tr>
+                    </tbody>
+                </table></div>
+            </div>
+
+            <!-- Tabela por Classe+Turma -->
+            <div class="cd mb-l">
+                <h3 class="fw7 fs-m mb-m">Detalhes por Classe e Turma — ${periodLabel}</h3>
+                <div class="ovx"><table class="tbl">
+                    <thead><tr>
+                        <th>Classe</th><th>Turma</th><th class="tc">Matric.</th><th class="tc">M</th><th class="tc">F</th>
+                        <th class="tc">Aval.</th><th class="tc">Aprov.</th><th class="tc">Reprov.</th>
+                        <th class="tc">Transf.</th><th class="tc">Desist.</th><th class="tc">%</th>
+                    </tr></thead>
+                    <tbody>
+                    ${Object.values(stats.byClassTurma).sort((a,b)=>a.classe.localeCompare(b.classe)||(a.turma||'').localeCompare(b.turma||'')).map(t=>{
+                        const pct=t.eval>0?Math.round(t.appr/t.eval*100):0;
+                        return`<tr>
+                            <td class="fw7">${t.classe}</td><td><span class="bg bg-in">${t.turma}</span></td>
+                            <td class="tc">${t.total}</td><td class="tc">${t.m}</td><td class="tc">${t.f}</td>
+                            <td class="tc">${t.eval}</td>
+                            <td class="tc" style="color:#059669">${t.appr}</td>
+                            <td class="tc" style="color:#DC2626">${t.fail}</td>
+                            <td class="tc">${t.transf}</td><td class="tc">${t.desist}</td>
+                            <td class="tc fw7" style="color:${pct>=60?'#059669':'#DC2626'}">${pct}%</td>
+                        </tr>`;
+                    }).join('')}
+                    </tbody>
+                </table></div>
+            </div>
+        `;
+
+        area.innerHTML = html;
+
+        // Gráficos
+        const cls2=['#059669','#DC2626','#F59E0B','#6B7280','#2563EB'];
+        setTimeout(()=>{
+            try{new Chart(document.getElementById('ssc1'),{type:'doughnut',data:{labels:['Aprovados','Reprovados','Transferidos','Desistentes','Não Avaliados'],datasets:[{data:[stats.approved,stats.failed,stats.transferred,stats.desisted,stats.notEvaluated],backgroundColor:cls2,borderWidth:0}]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}})}catch(e){}
+            try{
+                const clLabels=Object.keys(stats.byClass).sort();
+                new Chart(document.getElementById('ssc2'),{type:'bar',data:{labels:clLabels,datasets:[
+                    {label:'Aprovados',data:clLabels.map(c=>stats.byClass[c].appr),backgroundColor:'#059669'},
+                    {label:'Reprovados',data:clLabels.map(c=>stats.byClass[c].fail),backgroundColor:'#DC2626'},
+                    {label:'Transferidos',data:clLabels.map(c=>stats.byClass[c].transf),backgroundColor:'#F59E0B'}
+                ]},options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true},x:{stacked:false}}}});
+            }catch(e){}
+        },300);
+
+    } catch(e){
+        console.error('Erro stats:', e);
+        area.innerHTML = `<p class="tr">${e.message}</p>`;
+    }
+};
+
+// Exportar PDF
+S._expSchStatsPDF = async function(){
+    const stats = S._schStatsData;
+    if(!stats) return this.toast('Carregue as estatísticas primeiro','warn');
+    const esc = this.school || {};
+    const period = document.getElementById('stPeriod')?.value || 'anual';
+    const periodLabel = period==='anual'?'Anual':`${period}º Trimestre`;
+
+    const {jsPDF}=window.jspdf;
+    const doc=new jsPDF('l','mm','a4');
+
+    // Cabeçalho
+    doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(0);
+    doc.text('REPÚBLICA DE ANGOLA',148,12,{align:'center'});
+    doc.setFontSize(9);doc.setFont('helvetica','normal');
+    doc.text('MINISTÉRIO DA EDUCAÇÃO',148,17,{align:'center'});
+    doc.setFontSize(10);doc.setFont('helvetica','bold');
+    doc.text((esc.name||'').toUpperCase(),148,23,{align:'center'});
+    doc.setDrawColor(204,27,43);doc.setLineWidth(.5);doc.line(30,25,266,25);
+
+    doc.setFontSize(14);
+    doc.text(`MAPA ESTATÍSTICO — ${periodLabel}`,148,33,{align:'center'});
+    doc.setDrawColor(212,160,23);doc.setLineWidth(.3);doc.line(60,35,236,35);
+
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text(`${esc.province||''} — ${esc.municipality||''} | Ano Lectivo ${new Date().getFullYear()}`,148,39,{align:'center'});
+
+    // Tabela principal
+    const clData = Object.entries(stats.byClass).sort((a,b)=>a[0].localeCompare(b[0]));
+    const rows = clData.map(([cl,c])=>{
+        const pct=c.eval>0?Math.round(c.appr/c.eval*100):0;
+        return[cl,c.total,c.m,c.f,c.eval,c.appr,c.fail,c.transf,c.desist,pct+'%'];
+    });
+
+    // Linha total
+    const totalPct = stats.evaluated>0?Math.round(stats.approved/stats.evaluated*100):0;
+    rows.push(['TOTAL',stats.total,stats.masculine,stats.feminine,stats.evaluated,stats.approved,stats.failed,stats.transferred,stats.desisted,totalPct+'%']);
+
+    doc.autoTable({
+        startY:43,
+        head:[['Classe','Matric.','Masc.','Fem.','Avaliados','Aprovados','Reprovados','Transf.','Desist.','% Aprov.']],
+        body:rows,
+        styles:{fontSize:8,cellPadding:3,halign:'center',font:'helvetica'},
+        headStyles:{fillColor:[204,27,43],textColor:255,fontStyle:'bold'},
+        columnStyles:{0:{halign:'left',fontStyle:'bold'}},
+        alternateRowStyles:{fillColor:[252,248,244]},
+        margin:{left:12,right:12},
+        didParseCell:function(data){
+            // Última linha (TOTAL) com fundo
+            if(data.section==='body' && data.row.index===rows.length-1){
+                data.cell.styles.fillColor=[26,26,26];
+                data.cell.styles.textColor=[212,160,23];
+                data.cell.styles.fontStyle='bold';
+            }
+            // Cor % aprovação
+            if(data.section==='body' && data.column.index===9 && data.row.index<rows.length-1){
+                const pct=parseInt(data.cell.raw);
+                data.cell.styles.fontStyle='bold';
+                data.cell.styles.textColor=pct>=60?[5,150,105]:[220,38,38];
+            }
+            // Cores colunas
+            if(data.section==='body' && data.row.index<rows.length-1){
+                if(data.column.index===5) data.cell.styles.textColor=[5,150,105];
+                if(data.column.index===6) data.cell.styles.textColor=[220,38,38];
+            }
+        }
+    });
+
+    // Tabela por turma
+    const tmData = Object.values(stats.byClassTurma).sort((a,b)=>a.classe.localeCompare(b.classe));
+    if(tmData.length > 0){
+        const tmY = doc.lastAutoTable.finalY + 8;
+        doc.setFontSize(10);doc.setFont('helvetica','bold');
+        doc.text('Detalhes por Turma',148,tmY,{align:'center'});
+
+        const tmRows = tmData.map(t=>{
+            const pct=t.eval>0?Math.round(t.appr/t.eval*100):0;
+            return[t.classe,t.turma,t.total,t.m,t.f,t.eval,t.appr,t.fail,t.transf,t.desist,pct+'%'];
+        });
+
+        doc.autoTable({
+            startY:tmY+4,
+            head:[['Classe','Turma','Mat.','M','F','Aval.','Aprov.','Repr.','Transf.','Des.','%']],
+            body:tmRows,
+            styles:{fontSize:7,cellPadding:2,halign:'center'},
+            headStyles:{fillColor:[60,60,60],textColor:255,fontSize:6.5},
+            columnStyles:{0:{halign:'left',fontStyle:'bold'}},
+            margin:{left:12,right:12}
+        });
+    }
+
+    // Rodapé
+    const fy = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`,148,fy,{align:'center'});
+
+    doc.text('O(A) Director(a)',60,fy+12,{align:'center'});doc.line(25,fy+14,95,fy+14);
+    doc.text('Subdirector(a) Pedagógico(a)',236,fy+12,{align:'center'});doc.line(195,fy+14,277,fy+14);
+
+    await this.addQR(doc,`SGE|STATS|${esc.name||''}|${stats.total}|${periodLabel}`,135,fy+2,18);
+
+    doc.save(`Estatistica_${periodLabel}_${(esc.name||'Escola').replace(/\s+/g,'_')}.pdf`);
+    this.toast('PDF estatístico gerado!','success');
+};
+
+// Exportar XLSX
+S._expSchStatsXL = function(){
+    const stats = S._schStatsData;
+    if(!stats) return S.toast('Carregue primeiro','warn');
+    const period = document.getElementById('stPeriod')?.value||'anual';
+    const periodLabel = period==='anual'?'Anual':`T${period}`;
+
+    const wb = XLSX.utils.book_new();
+
+    // Aba resumo
+    const resumo = [{
+        'Período':periodLabel,'Matriculados':stats.total,'Masculinos':stats.masculine,
+        'Femininos':stats.feminine,'Avaliados':stats.evaluated,'Aprovados':stats.approved,
+        'Reprovados':stats.failed,'Transferidos':stats.transferred,'Desistentes':stats.desisted,
+        '% Aprovação':stats.evaluated>0?Math.round(stats.approved/stats.evaluated*100)+'%':'0%'
+    }];
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(resumo),'Resumo');
+
+    // Aba por classe
+    const clData = Object.entries(stats.byClass).sort((a,b)=>a[0].localeCompare(b[0])).map(([cl,c])=>({
+        Classe:cl,Matriculados:c.total,Masculinos:c.m,Femininos:c.f,
+        Avaliados:c.eval,Aprovados:c.appr,Reprovados:c.fail,
+        Transferidos:c.transf,Desistentes:c.desist,
+        '% Aprovação':c.eval>0?Math.round(c.appr/c.eval*100)+'%':'0%'
+    }));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(clData),'Por Classe');
+
+    // Aba por turma
+    const tmData = Object.values(stats.byClassTurma).sort((a,b)=>a.classe.localeCompare(b.classe)).map(t=>({
+        Classe:t.classe,Turma:t.turma,Matriculados:t.total,M:t.m,F:t.f,
+        Avaliados:t.eval,Aprovados:t.appr,Reprovados:t.fail,
+        Transferidos:t.transf,Desistentes:t.desist,
+        '%':t.eval>0?Math.round(t.appr/t.eval*100)+'%':'0%'
+    }));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(tmData),'Por Turma');
+
+    XLSX.writeFile(wb,`Estatistica_${periodLabel}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    S.toast('XLSX exportado!','success');
+};
+
+// =============================================
+// ESTATÍSTICAS DO PROFESSOR (só suas turmas)
+// =============================================
+S.pgProfStats = async function(){
+    if(!this.hasRole('professor')) return this.pgAccessDenied();
+    const pc = document.getElementById('pgC');
+    const tid = this.tid();
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Minhas Estatísticas</h2><p class="tm fs-s">Dados das suas turmas e disciplinas</p></div>
+        </div>
+        <div id="profStArea"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div>
+    </div>`;
+
+    try {
+        // Carregar atribuições do professor
+        const assignSnap = await db.collection('schools').doc(tid).collection('assignments')
+            .where('professorId','==',this.user.uid).get();
+
+        if(assignSnap.empty){
+            document.getElementById('profStArea').innerHTML = '<div class="cd tc" style="padding:40px"><span class="material-icons-outlined" style="font-size:2.5rem;color:#D4A017">assignment</span><h3 class="fw7 mt-m">Sem atribuições</h3></div>';
+            return;
+        }
+
+        const assignments = [];
+        assignSnap.forEach(d => assignments.push(d.data()));
+
+        let html = '';
+
+        for(const assign of assignments){
+            const students = await this._getStudentsByClassTurma(tid, assign.classe, assign.turma);
+            const dk = assign.disciplina.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+            const pg = this.passG(assign.classe);
+
+            let evaluated=0, passed=0, failed=0, totalNota=0;
+
+            for(const s of students){
+                let mts = [];
+                for(let t=1;t<=3;t++){
+                    try{const g=await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${t}_${dk}`).get();
+                    if(g.exists&&g.data().mt!=null)mts.push(g.data().mt)}catch(e){}
+                }
+                if(mts.length>0){
+                    evaluated++;
+                    const avg = Math.round(mts.reduce((a,b)=>a+b,0)/mts.length);
+                    totalNota += avg;
+                    if(avg >= pg) passed++; else failed++;
+                }
+            }
+
+            const classAvg = evaluated>0?Math.round(totalNota/evaluated):0;
+            const pctAppr = evaluated>0?Math.round(passed/evaluated*100):0;
+
+            html += `<div class="cd mb-m" style="border-left:4px solid ${pctAppr>=60?'#059669':'#DC2626'}">
+                <div class="fb fw gm mb-m">
+                    <div>
+                        <h3 class="fw7 fs-m">${assign.classe} — Turma ${assign.turma}</h3>
+                        <p class="tm fs-s">${assign.disciplina}</p>
+                    </div>
+                    <span class="bg ${pctAppr>=60?'bg-ok':'bg-er'}" style="font-size:.8rem;padding:4px 12px">${pctAppr}% aprovação</span>
+                </div>
+                <div class="g4">
+                    <div class="tc"><p class="fw8 fs-l" style="color:#2563EB">${students.length}</p><p class="fs-s tm">Matriculados</p></div>
+                    <div class="tc"><p class="fw8 fs-l" style="color:#D4A017">${evaluated}</p><p class="fs-s tm">Avaliados</p></div>
+                    <div class="tc"><p class="fw8 fs-l" style="color:#059669">${passed}</p><p class="fs-s tm">Aprovados</p></div>
+                    <div class="tc"><p class="fw8 fs-l" style="color:#DC2626">${failed}</p><p class="fs-s tm">Reprovados</p></div>
+                </div>
+                <div style="margin-top:10px;padding:8px;background:rgba(212,160,23,.05);border-radius:6px">
+                    <p class="fs-s"><strong>Média da turma:</strong> <span class="fw8" style="color:${classAvg>=pg?'#059669':'#DC2626'}">${classAvg} valores</span> | 
+                    <strong>Não avaliados:</strong> ${students.length - evaluated}</p>
+                </div>
+            </div>`;
+        }
+
+        document.getElementById('profStArea').innerHTML = html;
+
+    } catch(e){
+        document.getElementById('profStArea').innerHTML = `<p class="tr">${e.message}</p>`;
+    }
+};
+
+console.log('✅ Estatísticas por escola carregadas:');
+console.log('   - Matriculados, Avaliados, Aprovados, Reprovados');
+console.log('   - Transferidos, Desistentes');
+console.log('   - Por classe, turma, trimestre/anual');
+console.log('   - PDF com tabelas coloridas + XLSX');
+console.log('   - Professor: só suas turmas');
+console.log('   - Visível: Director, SubDir, Secretaria, Professor');
+</script>
+<!-- ================================================
+     FIM ESTATÍSTICAS POR ESCOLA
+     ================================================ -->
 </body>
 </html>
