@@ -15948,5 +15948,525 @@ console.log('   - PDF: Ficha + Boletim + Passe (3 páginas)');
 <!-- ================================================
      FIM CONSULTA COMPLETA
      ================================================ -->
+<!-- ================================================
+     PROFESSOR — Só vê suas atribuições
+     ================================================ -->
+<script>
+// =============================================
+// FILTRAR TUDO DO PROFESSOR POR ATRIBUIÇÕES
+// =============================================
+
+// Cache das atribuições do professor
+S._profAssignments = null;
+
+S._loadProfAssignments = async function(){
+    if(this._profAssignments) return this._profAssignments;
+    if(!this.hasRole('professor')) return [];
+
+    const tid = this.tid();
+    if(!tid) return [];
+
+    try {
+        const snap = await db.collection('schools').doc(tid).collection('assignments')
+            .where('professorId','==',this.user.uid).get();
+        
+        const assigns = [];
+        snap.forEach(d => assigns.push(d.data()));
+        this._profAssignments = assigns;
+        return assigns;
+    } catch(e){
+        console.error('Erro ao carregar atribuições:', e);
+        return [];
+    }
+};
+
+// Limpar cache ao mudar de página
+(function(){
+    const origLogout = S.logout;
+    S.logout = async function(){
+        S._profAssignments = null;
+        await origLogout.call(this);
+    };
+})();
+
+// =============================================
+// PAUTA DO PROFESSOR — Só suas turmas/disciplinas
+// =============================================
+S._pgGradesProfessor = async function(){
+    const pc = document.getElementById('pgC');
+    const tid = this.tid();
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Lançar Notas</h2>
+            <p class="tm fs-s">Seleccione uma das suas turmas e disciplinas</p></div>
+        </div>
+        <div id="gpContent"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div>
+    </div>`;
+
+    const assigns = await this._loadProfAssignments();
+
+    if(assigns.length === 0){
+        document.getElementById('gpContent').innerHTML = `
+            <div class="cd tc" style="padding:50px">
+                <span class="material-icons-outlined" style="font-size:3rem;color:#D4A017">assignment</span>
+                <h3 class="fw7 mt-m">Sem Atribuições</h3>
+                <p class="tm mt-s fs-s">O director ainda não lhe atribuiu turmas e disciplinas.</p>
+                <p class="tm fs-s">Contacte a direcção da escola.</p>
+            </div>`;
+        return;
+    }
+
+    // Extrair classes e turmas únicas
+    const uniqueClasses = [...new Set(assigns.map(a => a.classe))].sort();
+    const uniqueTurmas = {};
+    const discsByClassTurma = {};
+
+    assigns.forEach(a => {
+        if(!uniqueTurmas[a.classe]) uniqueTurmas[a.classe] = new Set();
+        uniqueTurmas[a.classe].add(a.turma);
+
+        const key = `${a.classe}|${a.turma}`;
+        if(!discsByClassTurma[key]) discsByClassTurma[key] = [];
+        discsByClassTurma[key].push(a.disciplina);
+    });
+
+    let html = `
+        <!-- Filtros baseados nas atribuições -->
+        <div class="cd mb-l">
+            <h3 class="fw7 fs-m mb-m">
+                <span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#D4A017;font-size:1rem">filter_list</span>
+                Seleccionar Pauta
+            </h3>
+            <div class="g4">
+                <div class="fg">
+                    <label class="fl">Classe *</label>
+                    <select id="gp_cl" class="fs" onchange="S._gpProfUpdateTurmas()">
+                        <option value="">— Seleccionar —</option>
+                        ${uniqueClasses.map(c => `<option value="${c}">${c}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="fg">
+                    <label class="fl">Turma *</label>
+                    <select id="gp_tm" class="fs" onchange="S._gpProfUpdateDiscs()">
+                        <option value="">— Seleccionar —</option>
+                    </select>
+                </div>
+                <div class="fg">
+                    <label class="fl">Disciplina *</label>
+                    <select id="gp_dc" class="fs">
+                        <option value="">— Seleccionar —</option>
+                    </select>
+                </div>
+                <div class="fg">
+                    <label class="fl">Trimestre *</label>
+                    <select id="gp_tr" class="fs">
+                        <option value="1">1º Trimestre</option>
+                        <option value="2">2º Trimestre</option>
+                        <option value="3">3º Trimestre</option>
+                    </select>
+                </div>
+            </div>
+            <button class="btn btn-r mt-s" onclick="S._gpLoadPauta()">
+                <span class="material-icons-outlined">grading</span>Carregar Pauta
+            </button>
+        </div>
+
+        <!-- Acesso rápido -->
+        <div class="cd mb-l">
+            <h3 class="fw7 fs-m mb-m">
+                <span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#059669;font-size:1rem">bolt</span>
+                Minhas Turmas — Acesso Rápido
+            </h3>
+            <div class="g2">
+                ${assigns.map(a => `
+                    <div class="cd" style="padding:12px;cursor:pointer;border-left:3px solid #D4A017;transition:all .15s"
+                        onclick="S._gpQuickSelect('${a.classe}','${a.turma}','${a.disciplina}')"
+                        onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 2px 8px rgba(0,0,0,.06)'"
+                        onmouseout="this.style.transform='';this.style.boxShadow=''">
+                        <div class="fb">
+                            <div>
+                                <span class="fw7">${a.classe} — Turma ${a.turma}</span>
+                                <br><span class="tm fs-s">${a.disciplina}</span>
+                                ${a.horario?`<br><span class="fs-s" style="color:#D4A017">🕐 ${a.horario}</span>`:''}
+                            </div>
+                            <span class="material-icons-outlined" style="color:#D4A017;font-size:1.1rem">arrow_forward</span>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+
+        <!-- Área da pauta -->
+        <div id="gpArea"></div>
+    `;
+
+    document.getElementById('gpContent').innerHTML = html;
+
+    // Guardar dados para uso nos dropdowns
+    S._gpUniqueTurmas = uniqueTurmas;
+    S._gpDiscsByClassTurma = discsByClassTurma;
+};
+
+// Actualizar turmas quando classe muda
+S._gpProfUpdateTurmas = function(){
+    const cl = document.getElementById('gp_cl')?.value;
+    const tmSel = document.getElementById('gp_tm');
+    const dcSel = document.getElementById('gp_dc');
+    if(!tmSel) return;
+
+    tmSel.innerHTML = '<option value="">— Seleccionar —</option>';
+    if(dcSel) dcSel.innerHTML = '<option value="">— Seleccionar —</option>';
+
+    if(!cl) return;
+
+    const turmas = S._gpUniqueTurmas?.[cl];
+    if(turmas){
+        turmas.forEach(t => {
+            tmSel.innerHTML += `<option value="${t}">Turma ${t}</option>`;
+        });
+    }
+};
+
+// Actualizar disciplinas quando turma muda
+S._gpProfUpdateDiscs = function(){
+    const cl = document.getElementById('gp_cl')?.value;
+    const tm = document.getElementById('gp_tm')?.value;
+    const dcSel = document.getElementById('gp_dc');
+    if(!dcSel) return;
+
+    dcSel.innerHTML = '<option value="">— Seleccionar —</option>';
+
+    if(!cl || !tm) return;
+
+    const key = `${cl}|${tm}`;
+    const discs = S._gpDiscsByClassTurma?.[key] || [];
+    discs.forEach(d => {
+        dcSel.innerHTML += `<option value="${d}">${d}</option>`;
+    });
+};
+
+// Selecção rápida
+S._gpQuickSelect = function(classe, turma, disciplina){
+    const clSel = document.getElementById('gp_cl');
+    const tmSel = document.getElementById('gp_tm');
+    const dcSel = document.getElementById('gp_dc');
+
+    if(clSel) clSel.value = classe;
+    this._gpProfUpdateTurmas();
+
+    setTimeout(() => {
+        if(tmSel) tmSel.value = turma;
+        this._gpProfUpdateDiscs();
+
+        setTimeout(() => {
+            if(dcSel) dcSel.value = disciplina;
+        }, 100);
+    }, 100);
+};
+
+// =============================================
+// PRESENÇAS DO PROFESSOR — Só suas turmas
+// =============================================
+S._routes['attendance'] = async function(){
+    const isProfessor = this.hasRole('professor');
+
+    if(isProfessor){
+        await this._pgAttendanceProfessor();
+    } else {
+        this._pgAttendanceDirector();
+    }
+};
+
+S._pgAttendanceProfessor = async function(){
+    const pc = document.getElementById('pgC');
+    const assigns = await this._loadProfAssignments();
+
+    if(assigns.length === 0){
+        pc.innerHTML = '<div class="fade cd tc" style="padding:50px"><span class="material-icons-outlined" style="font-size:3rem;color:#D4A017">fact_check</span><h3 class="fw7 mt-m">Sem Atribuições</h3></div>';
+        return;
+    }
+
+    const uniqueClassTurma = [];
+    const seen = new Set();
+    assigns.forEach(a => {
+        const key = `${a.classe}|${a.turma}`;
+        if(!seen.has(key)){
+            seen.add(key);
+            uniqueClassTurma.push({classe: a.classe, turma: a.turma});
+        }
+    });
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Presenças</h2>
+            <p class="tm fs-s">Registar presenças das suas turmas</p></div>
+        </div>
+        <div class="cd mb-l">
+            <div class="g3">
+                <div class="fg">
+                    <label class="fl">Classe / Turma *</label>
+                    <select id="at_cl_tm" class="fs">
+                        <option value="">— Seleccionar —</option>
+                        ${uniqueClassTurma.map(ct => `<option value="${ct.classe}|${ct.turma}">${ct.classe} — Turma ${ct.turma}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="fg">
+                    <label class="fl">Data *</label>
+                    <input type="date" id="at_dt" class="fi" value="${new Date().toISOString().split('T')[0]}">
+                </div>
+                <div class="fg" style="display:flex;align-items:flex-end">
+                    <button class="btn btn-r" onclick="S._loadAttendProf()" style="width:100%">
+                        <span class="material-icons-outlined">fact_check</span>Carregar
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div id="atArea"></div>
+    </div>`;
+};
+
+S._loadAttendProf = function(){
+    const sel = document.getElementById('at_cl_tm')?.value;
+    if(!sel) return this.toast('Seleccione a turma','error');
+    const [cl, tm] = sel.split('|');
+    
+    // Usar a função existente
+    document.getElementById('at_cl') && (document.getElementById('at_cl').value = cl);
+    document.getElementById('at_tm') && (document.getElementById('at_tm').value = tm);
+
+    // Chamar loadAttend directamente
+    this._loadAttendWithParams(cl, tm);
+};
+
+S._loadAttendWithParams = async function(cl, tm){
+    const tid = this.tid();
+    const dt = document.getElementById('at_dt')?.value;
+    const area = document.getElementById('atArea');
+
+    if(!cl || !tm || !dt) return this.toast('Preencha tudo','error');
+    area.innerHTML = '<div class="fc" style="padding:20px"><div class="ld-spin" style="width:24px;height:24px;border-width:2px"></div></div>';
+
+    try {
+        const students = await this._getStudentsByClassTurma(tid, cl, tm);
+        if(!students.length){ area.innerHTML = '<div class="cd tc" style="padding:20px"><p class="tm">Sem alunos</p></div>'; return; }
+
+        const exMap = await this._getAttendance(tid, cl, tm, dt);
+        const dtFmt = new Date(dt+'T12:00:00').toLocaleDateString('pt-AO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+        const colors = {P:['#059669','#D1FAE5'],F:['#DC2626','#FEE2E2'],J:['#2563EB','#DBEAFE'],A:['#F59E0B','#FEF3C7']};
+
+        let h = `<div class="cd p0" style="overflow:hidden">
+            <div style="padding:10px 12px;background:#fff;border-bottom:2px solid #CC1B2B">
+                <strong style="color:#CC1B2B">${cl} — Turma ${tm}</strong> | <span style="color:#D4A017">${dtFmt}</span>
+            </div>
+            <div style="padding:6px 12px;background:rgba(212,160,23,.04);border-bottom:1px solid #E5E7EB;display:flex;gap:12px;font-size:.72rem;font-weight:600">
+                <span style="color:#059669">● P — Presente</span><span style="color:#DC2626">● F — Falta</span>
+                <span style="color:#2563EB">● J — Justificada</span><span style="color:#F59E0B">● A — Atraso</span>
+            </div>
+            <div class="ovx"><table class="tbl"><thead><tr><th>Nº</th><th>Nome</th><th class="tc">Sexo</th><th class="tc" style="width:140px">Presença</th></tr></thead><tbody>`;
+
+        students.forEach((s, idx) => {
+            const ex = exMap[s.id] || 'P';
+            h += `<tr><td class="fw7">${idx+1}</td>
+                <td class="fw7 fs-s">${s.name||''}</td>
+                <td class="tc fs-s">${s.sex==='Feminino'?'F':'M'}</td>
+                <td class="tc"><div style="display:flex;gap:3px;justify-content:center">
+                    ${['P','F','J','A'].map(v => `<button class="btn btn-s" id="at${v}_${s.id}" onclick="S._sAV('${s.id}','${v}')" style="padding:4px 8px;font-weight:700;font-size:.72rem;border-radius:5px;min-width:26px;${ex===v?`background:${colors[v][0]};color:#fff;border:2px solid ${colors[v][0]}`:`background:transparent;color:${colors[v][0]};border:2px solid ${colors[v][1]}`}">${v}</button>`).join('')}
+                </div><input type="hidden" id="atV_${s.id}" value="${ex}"></td></tr>`;
+        });
+
+        h += `</tbody></table></div>
+            <div style="padding:10px;border-top:1px solid #E5E7EB;display:flex;justify-content:flex-end">
+                <button class="btn btn-gn" onclick="S._saveAttendSafe2('${cl}','${tm}')"><span class="material-icons-outlined">save</span>Guardar</button>
+            </div></div>`;
+
+        area.innerHTML = h;
+    } catch(e){ area.innerHTML = `<p class="tr">${e.message}</p>`; }
+};
+
+S._saveAttendSafe2 = async function(cl, tm){
+    const tid = this.tid();
+    const dt = document.getElementById('at_dt')?.value;
+    if(!dt) return;
+
+    try {
+        const students = await this._getStudentsByClassTurma(tid, cl, tm);
+        const batch = db.batch();
+        let cnt = 0;
+
+        students.forEach(s => {
+            const val = document.getElementById(`atV_${s.id}`)?.value || 'P';
+            const ref = db.collection('schools').doc(tid).collection('attendance').doc(`${s.id}_${dt}`);
+            batch.set(ref, {studentId:s.id, studentName:s.name||'', studentSex:s.sex||'', classe:cl, turma:tm, date:dt, status:val, schoolId:tid, updatedAt:firebase.firestore.FieldValue.serverTimestamp(), updatedBy:this.user.uid}, {merge:true});
+            cnt++;
+        });
+
+        await batch.commit();
+        this.toast(`${cnt} presenças guardadas!`,'success');
+    } catch(e){ this.toast(e.message,'error'); }
+};
+
+// Presenças do director (todas turmas)
+S._pgAttendanceDirector = function(){
+    const pc = document.getElementById('pgC');
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Controlo de Presenças</h2><p class="tm fs-s">Todas as turmas da escola</p></div></div>
+        <div class="cd mb-l">
+            <div class="g2 mb-m">
+                <div class="fg"><label class="fl">Classe *</label><select id="at_cl" class="fs" onchange="S._atUpdateTurmas()">
+                    <option value="">— Seleccionar —</option>
+                    ${(this.school?this.clsFor(this.school.type):this.allCls()).map(c=>`<option value="${c}">${c}</option>`).join('')}
+                </select></div>
+                <div class="fg"><label class="fl">Turma *</label><select id="at_tm" class="fs"><option value="">—</option></select></div>
+            </div>
+            <div class="g2">
+                <div class="fg"><label class="fl">Data *</label><input type="date" id="at_dt" class="fi" value="${new Date().toISOString().split('T')[0]}"></div>
+                <div class="fg" style="display:flex;align-items:flex-end"><button class="btn btn-r" onclick="S._loadAttendDir()" style="width:100%"><span class="material-icons-outlined">fact_check</span>Carregar</button></div>
+            </div>
+        </div>
+        <div id="atArea"></div>
+    </div>`;
+};
+
+S._loadAttendDir = function(){
+    const cl = document.getElementById('at_cl')?.value;
+    const tm = document.getElementById('at_tm')?.value;
+    if(!cl || !tm) return this.toast('Seleccione classe e turma','error');
+    this._loadAttendWithParams(cl, tm);
+};
+
+// =============================================
+// MINHAS TURMAS (Professor) — Acesso rápido
+// =============================================
+S._routes['my-assignments'] = async function(){
+    if(!this.hasRole('professor')) return this.pgAccessDenied();
+
+    const pc = document.getElementById('pgC');
+    const assigns = await this._loadProfAssignments();
+
+    if(assigns.length === 0){
+        pc.innerHTML = '<div class="fade cd tc" style="padding:50px"><span class="material-icons-outlined" style="font-size:3rem;color:#D4A017">assignment</span><h3 class="fw7 mt-m">Sem Atribuições</h3><p class="tm mt-s">Contacte a direcção.</p></div>';
+        return;
+    }
+
+    let html = `<div class="fade">
+        <h2 class="fw8 fs-l mb-l">Minhas Turmas & Disciplinas</h2>
+        <div class="g2">`;
+
+    for(const a of assigns){
+        // Contar alunos
+        let studCount = 0;
+        try {
+            const studs = await this._getStudentsByClassTurma(this.tid(), a.classe, a.turma);
+            studCount = studs.length;
+        } catch(e){}
+
+        html += `
+            <div class="cd" style="border-left:4px solid #D4A017">
+                <div class="fb mb-s">
+                    <h3 class="fw7 fs-m">${a.classe} — Turma ${a.turma}</h3>
+                    <span class="bg bg-in">${studCount} alunos</span>
+                </div>
+                <p class="tm fs-s">${a.disciplina}</p>
+                ${a.horario ? `<p class="fs-s mt-s" style="color:#D4A017">🕐 ${a.horario}</p>` : ''}
+                <div style="display:flex;gap:5px;margin-top:10px">
+                    <button class="btn btn-r btn-s" onclick="S._gpQuickSelect('${a.classe}','${a.turma}','${a.disciplina}');S.nav('grades')">
+                        <span class="material-icons-outlined" style="font-size:.8rem">grading</span>Notas
+                    </button>
+                    <button class="btn btn-o btn-s" onclick="S.nav('attendance')">
+                        <span class="material-icons-outlined" style="font-size:.8rem">fact_check</span>Presenças
+                    </button>
+                </div>
+            </div>`;
+    }
+
+    html += '</div></div>';
+    pc.innerHTML = html;
+};
+
+// =============================================
+// ESTATÍSTICAS PROFESSOR — Só suas turmas
+// =============================================
+S.pgProfStats = async function(){
+    if(!this.hasRole('professor')) return this.pgAccessDenied();
+
+    const pc = document.getElementById('pgC');
+    const tid = this.tid();
+    const assigns = await this._loadProfAssignments();
+
+    if(assigns.length === 0){
+        pc.innerHTML = '<div class="fade cd tc" style="padding:50px"><span class="material-icons-outlined" style="font-size:3rem;color:#D4A017">analytics</span><h3 class="fw7 mt-m">Sem Atribuições</h3></div>';
+        return;
+    }
+
+    pc.innerHTML = `<div class="fade">
+        <h2 class="fw8 fs-l mb-l">Minhas Estatísticas</h2>
+        <div id="profStContent"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div>
+    </div>`;
+
+    let html = '';
+
+    for(const a of assigns){
+        const students = await this._getStudentsByClassTurma(tid, a.classe, a.turma);
+        const dk = a.disciplina.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+        const pg = this.passG(a.classe);
+
+        let evaluated=0, passed=0, failed=0, totalNota=0;
+
+        for(const s of students){
+            let mts = [];
+            for(let t=1;t<=3;t++){
+                try{
+                    const g = await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${t}_${dk}`).get();
+                    if(g.exists && g.data().mt != null) mts.push(g.data().mt);
+                } catch(e){}
+            }
+            if(mts.length > 0){
+                evaluated++;
+                const avg = Math.round(mts.reduce((a2,b)=>a2+b,0)/mts.length);
+                totalNota += avg;
+                if(avg >= pg) passed++; else failed++;
+            }
+        }
+
+        const classAvg = evaluated > 0 ? Math.round(totalNota/evaluated) : 0;
+        const pctAppr = evaluated > 0 ? Math.round(passed/evaluated*100) : 0;
+
+        html += `
+            <div class="cd mb-m" style="border-left:4px solid ${pctAppr>=60?'#059669':'#DC2626'}">
+                <div class="fb fw gm mb-m">
+                    <div>
+                        <h3 class="fw7 fs-m">${a.classe} — Turma ${a.turma}</h3>
+                        <p class="tm fs-s">${a.disciplina}</p>
+                    </div>
+                    <span class="bg ${pctAppr>=60?'bg-ok':'bg-er'}" style="font-size:.8rem;padding:4px 12px">${pctAppr}%</span>
+                </div>
+                <div class="g4">
+                    <div class="tc"><p class="fw8 fs-l" style="color:#2563EB">${students.length}</p><p class="fs-s tm">Matriculados</p></div>
+                    <div class="tc"><p class="fw8 fs-l" style="color:#D4A017">${evaluated}</p><p class="fs-s tm">Avaliados</p></div>
+                    <div class="tc"><p class="fw8 fs-l" style="color:#059669">${passed}</p><p class="fs-s tm">Aprovados</p></div>
+                    <div class="tc"><p class="fw8 fs-l" style="color:#DC2626">${failed}</p><p class="fs-s tm">Reprovados</p></div>
+                </div>
+                <div style="margin-top:8px;padding:6px 10px;background:rgba(212,160,23,.05);border-radius:5px">
+                    <p class="fs-s">
+                        <strong>Média da turma:</strong> <span class="fw8" style="color:${classAvg>=pg?'#059669':'#DC2626'}">${classAvg} valores</span> |
+                        <strong>Não avaliados:</strong> ${students.length - evaluated}
+                    </p>
+                </div>
+            </div>`;
+    }
+
+    document.getElementById('profStContent').innerHTML = html;
+};
+
+console.log('✅ Professor filtrado por atribuições:');
+console.log('   - Notas: só classes/turmas/disciplinas atribuídas');
+console.log('   - Presenças: só turmas atribuídas');
+console.log('   - Estatísticas: só suas turmas');
+console.log('   - Minhas Turmas: acesso rápido');
+</script>
+<!-- ================================================
+     FIM PROFESSOR FILTRADO
+     ================================================ -->
 </body>
 </html>
