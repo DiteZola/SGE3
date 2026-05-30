@@ -15449,5 +15449,504 @@ console.log('⚠️ IMPORTANTE: Actualize as regras do Firestore e Storage no Fi
 <!-- ================================================
      FIM CORREÇÕES
      ================================================ -->
+<!-- ================================================
+     CONSULTA ACADÉMICA COMPLETA
+     ================================================ -->
+<script>
+S.publicConsulta = async function(){
+    const q = document.getElementById('pub_q')?.value.trim();
+    if(!q) return this.toast('Introduza BI, processo ou matrícula','error');
+
+    const res = document.getElementById('pub_res');
+    res.innerHTML = '<p style="color:rgba(255,255,255,.5);padding:12px;text-align:center;font-size:.8rem"><span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:1rem;vertical-align:middle;margin-right:4px">hourglass_empty</span>Pesquisando...</p>';
+
+    try {
+        let found=false, fStudent=null, fSchool=null, fSchoolId=null, fStudentId=null;
+
+        const schoolsSnap = await db.collection('schools').get();
+        for(const schDoc of schoolsSnap.docs){
+            if(found) break;
+            try {
+                const studSnap = await db.collection('schools').doc(schDoc.id).collection('students').get();
+                studSnap.forEach(sDoc => {
+                    if(found) return;
+                    const s = sDoc.data();
+                    if((s.bi&&s.bi===q)||(s.process&&s.process===q)||(s.matricula&&s.matricula===q)){
+                        found=true; fStudent=s; fSchool=schDoc.data(); fSchoolId=schDoc.id; fStudentId=sDoc.id;
+                    }
+                });
+            } catch(e){ continue; }
+        }
+
+        if(!found){
+            res.innerHTML = '<div style="text-align:center;padding:16px"><span class="material-icons-outlined" style="font-size:2rem;color:#EF4444">person_off</span><p style="color:rgba(255,255,255,.5);margin-top:6px;font-size:.8rem">Nenhum estudante encontrado</p></div>';
+            return;
+        }
+
+        // Carregar dados completos
+        const s = fStudent;
+        const esc = fSchool;
+        const st = this.gSt(s.status||'Activo', s.sex);
+        const discs = this.DISC[s.classe] || [];
+        const pg = this.passG(s.classe);
+        const mg = this.maxG(s.classe);
+
+        // ===== CARREGAR NOTAS =====
+        const gradeData = [];
+        let mgTotal=0, mgCount=0;
+
+        for(const disc of discs){
+            const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+            const row = {disc, mt1:null, mt2:null, mt3:null, mf:null};
+
+            for(let t=1;t<=3;t++){
+                try {
+                    const g = await db.collection('schools').doc(fSchoolId).collection('grades').doc(`${fStudentId}_${t}_${dk}`).get();
+                    if(g.exists && g.data().mt!=null) row[`mt${t}`] = g.data().mt;
+                } catch(e){}
+            }
+
+            const mts = [row.mt1,row.mt2,row.mt3].filter(v=>v!==null);
+            if(mts.length>0){
+                row.mf = Math.round(mts.reduce((a,b)=>a+b,0)/mts.length);
+                mgTotal += row.mf;
+                mgCount++;
+            }
+            gradeData.push(row);
+        }
+
+        const mediaGeral = mgCount>0 ? Math.round(mgTotal/mgCount) : null;
+
+        // ===== CARREGAR FALTAS =====
+        let faltasJ=0, faltasNJ=0, presencas=0, atrasos=0;
+        try {
+            const attSnap = await db.collection('schools').doc(fSchoolId).collection('attendance')
+                .where('studentId','==',fStudentId).get();
+            attSnap.forEach(d => {
+                const st2 = d.data().status;
+                if(st2==='P') presencas++;
+                else if(st2==='F') faltasNJ++;
+                else if(st2==='J') faltasJ++;
+                else if(st2==='A') atrasos++;
+            });
+        } catch(e){}
+
+        const totalFaltas = faltasJ + faltasNJ;
+        const totalAulas = presencas + faltasNJ + faltasJ + atrasos;
+
+        // ===== CARREGAR DÍVIDAS =====
+        let valorEsperado=0, valorPago=0;
+
+        // Configs financeiras
+        try {
+            const cfgSnap = await db.collection('schools').doc(fSchoolId).collection('finConfig').get();
+            cfgSnap.forEach(d => {
+                const cfg = d.data();
+                const level = cfg.level||'Todas';
+                let applies = false;
+                if(level==='Todas') applies=true;
+                else if(level==='Ensino Primário'&&this.isPri(s.classe)) applies=true;
+                else if(level==='I Ciclo'){const n=parseInt(s.classe);applies=n>=7&&n<=9}
+                else if(level==='II Ciclo'){const n=parseInt(s.classe);applies=n>=10&&n<=13}
+                else if(level===s.classe) applies=true;
+
+                if(applies){
+                    let mult=1;
+                    if(cfg.period==='Mensal')mult=10;
+                    else if(cfg.period==='Trimestral')mult=3;
+                    else if(cfg.period==='Semestral')mult=2;
+                    valorEsperado += (cfg.amount||0)*mult;
+                }
+            });
+        } catch(e){}
+
+        // Pagamentos feitos
+        try {
+            const finSnap = await db.collection('schools').doc(fSchoolId).collection('finances')
+                .where('type','==','receita').get();
+            finSnap.forEach(d => {
+                const f = d.data();
+                if(f.studentId===fStudentId || f.studentName===s.name){
+                    valorPago += (f.amount||0);
+                }
+            });
+        } catch(e){}
+
+        const divida = Math.max(0, valorEsperado - valorPago);
+
+        // ===== CONSTRUIR RESULTADO =====
+        res.innerHTML = `
+        <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:16px;margin-top:10px;max-height:60vh;overflow-y:auto">
+
+            <!-- DADOS DO ALUNO -->
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(255,255,255,.08)">
+                <div style="width:48px;height:48px;border-radius:11px;background:linear-gradient(135deg,${s.sex==='Feminino'?'#EC4899,#BE185D':'#3B82F6,#1D4ED8'});display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.8rem;overflow:hidden;flex-shrink:0">
+                    ${s.photo?`<img src="${s.photo}" style="width:100%;height:100%;object-fit:cover">`:(s.name||'E').substring(0,2).toUpperCase()}
+                </div>
+                <div>
+                    <h3 style="color:#fff;font-weight:800;font-size:.95rem">${s.name||'N/D'}</h3>
+                    <p style="color:rgba(255,255,255,.5);font-size:.72rem">${esc.name||''}</p>
+                    <div style="display:flex;gap:4px;margin-top:3px">
+                        <span class="bg bg-in" style="font-size:.58rem">${s.classe||''}</span>
+                        <span class="bg bg-in" style="font-size:.58rem">Turma ${s.turma||''}</span>
+                        <span class="bg ${st.includes('Activ')||st.includes('Aprovad')?'bg-ok':'bg-wr'}" style="font-size:.58rem">${st}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DADOS PESSOAIS -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:.74rem;color:#ccc;margin-bottom:12px">
+                <div><strong style="color:#D4A017">Processo:</strong> ${s.process||'—'}</div>
+                <div><strong style="color:#D4A017">Matrícula:</strong> ${s.matricula||'—'}</div>
+                <div><strong style="color:#D4A017">BI:</strong> ${s.bi||'—'}</div>
+                <div><strong style="color:#D4A017">Turno:</strong> ${s.turno||'—'}</div>
+            </div>
+
+            <!-- FALTAS -->
+            <div style="padding:10px;border-radius:8px;background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.12);margin-bottom:12px">
+                <h4 style="color:#fff;font-size:.78rem;font-weight:700;margin-bottom:6px">📋 Presenças & Faltas</h4>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;text-align:center">
+                    <div><p style="font-weight:800;font-size:.9rem;color:#059669">${presencas}</p><p style="font-size:.6rem;color:#999">Presenças</p></div>
+                    <div><p style="font-weight:800;font-size:.9rem;color:#DC2626">${faltasNJ}</p><p style="font-size:.6rem;color:#999">Faltas</p></div>
+                    <div><p style="font-weight:800;font-size:.9rem;color:#2563EB">${faltasJ}</p><p style="font-size:.6rem;color:#999">Justificadas</p></div>
+                    <div><p style="font-weight:800;font-size:.9rem;color:#F59E0B">${totalFaltas}</p><p style="font-size:.6rem;color:#999">Total Faltas</p></div>
+                </div>
+                <div style="margin-top:6px;height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden">
+                    <div style="width:${totalAulas>0?Math.round(presencas/totalAulas*100):0}%;height:100%;background:#059669;border-radius:2px"></div>
+                </div>
+                <p style="font-size:.62rem;color:#999;margin-top:3px;text-align:center">${totalAulas>0?Math.round(presencas/totalAulas*100):0}% de assiduidade (${totalAulas} aulas)</p>
+            </div>
+
+            <!-- DÍVIDAS -->
+            <div style="padding:10px;border-radius:8px;background:${divida>0?'rgba(220,38,38,.06)':'rgba(5,150,105,.06)'};border:1px solid ${divida>0?'rgba(220,38,38,.12)':'rgba(5,150,105,.12)'};margin-bottom:12px">
+                <h4 style="color:#fff;font-size:.78rem;font-weight:700;margin-bottom:6px">💰 Situação Financeira</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;text-align:center">
+                    <div><p style="font-weight:800;font-size:.85rem;color:#D4A017">${valorEsperado.toLocaleString('pt-AO')}</p><p style="font-size:.6rem;color:#999">Valor Devido (Kz)</p></div>
+                    <div><p style="font-weight:800;font-size:.85rem;color:#059669">${valorPago.toLocaleString('pt-AO')}</p><p style="font-size:.6rem;color:#999">Valor Pago (Kz)</p></div>
+                    <div><p style="font-weight:800;font-size:.85rem;color:${divida>0?'#DC2626':'#059669'}">${divida.toLocaleString('pt-AO')}</p><p style="font-size:.6rem;color:#999">Dívida (Kz)</p></div>
+                </div>
+                ${divida>0?`<p style="font-size:.65rem;color:#DC2626;text-align:center;margin-top:4px;font-weight:600">⚠️ Aluno com dívida pendente</p>`
+                :`<p style="font-size:.65rem;color:#059669;text-align:center;margin-top:4px;font-weight:600">✅ Pagamentos em dia</p>`}
+            </div>
+
+            <!-- BOLETIM (notas) -->
+            <div style="padding:10px;border-radius:8px;background:rgba(212,160,23,.06);border:1px solid rgba(212,160,23,.12);margin-bottom:12px">
+                <h4 style="color:#fff;font-size:.78rem;font-weight:700;margin-bottom:8px">📊 Boletim Anual (Notas: 0–${mg})</h4>
+                <table style="width:100%;border-collapse:collapse;font-size:.68rem">
+                    <thead>
+                        <tr style="border-bottom:1px solid rgba(255,255,255,.1)">
+                            <th style="text-align:left;padding:3px 4px;color:#D4A017;font-size:.6rem">Disciplina</th>
+                            <th style="text-align:center;padding:3px;color:#D4A017;font-size:.6rem;width:30px">1ºT</th>
+                            <th style="text-align:center;padding:3px;color:#D4A017;font-size:.6rem;width:30px">2ºT</th>
+                            <th style="text-align:center;padding:3px;color:#D4A017;font-size:.6rem;width:30px">3ºT</th>
+                            <th style="text-align:center;padding:3px;color:#D4A017;font-size:.6rem;width:30px">MF</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${gradeData.map(r => {
+                            const noteCell = (v) => {
+                                if(v===null) return '<td style="text-align:center;padding:2px;color:rgba(255,255,255,.2)">—</td>';
+                                const n = Math.round(v);
+                                return `<td style="text-align:center;padding:2px;font-weight:700;color:${n>=pg?'#059669':'#DC2626'}">${n}</td>`;
+                            };
+                            return `<tr style="border-bottom:1px solid rgba(255,255,255,.04)">
+                                <td style="padding:2px 4px;color:#ddd;font-size:.66rem">${r.disc.length>18?r.disc.substring(0,16)+'..':r.disc}</td>
+                                ${noteCell(r.mt1)}${noteCell(r.mt2)}${noteCell(r.mt3)}${noteCell(r.mf)}
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                    <tfoot>
+                        <tr style="border-top:1px solid rgba(212,160,23,.3)">
+                            <td style="padding:4px;font-weight:800;color:#D4A017;font-size:.72rem">MÉDIA GERAL</td>
+                            <td colspan="3"></td>
+                            <td style="text-align:center;font-weight:900;font-size:.82rem;color:${mediaGeral!==null?(mediaGeral>=pg?'#059669':'#DC2626'):'rgba(255,255,255,.3)'}">${mediaGeral!==null?mediaGeral:'—'}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+
+                ${mediaGeral!==null?`<p style="text-align:center;margin-top:6px;font-size:.72rem;font-weight:700;color:${mediaGeral>=pg?'#059669':'#DC2626'}">
+                    ${mediaGeral>=pg?'✅':'❌'} ${this.gSt(mediaGeral>=pg?'Aprovado':'Reprovado', s.sex)} — Média: ${mediaGeral} valores
+                </p>`:'<p style="text-align:center;margin-top:6px;font-size:.68rem;color:#999">Sem notas suficientes para determinar resultado</p>'}
+            </div>
+
+            <!-- BOTÃO IMPRIMIR -->
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button onclick="S._printConsultaCompletaPDF('${fSchoolId}','${fStudentId}')" 
+                    style="flex:1;padding:8px 12px;background:linear-gradient(135deg,#CC1B2B,#991B1B);color:#fff;border:none;border-radius:7px;font-size:.76rem;cursor:pointer;font-family:'Inter',sans-serif;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px">
+                    <span class="material-icons-outlined" style="font-size:.9rem">print</span>
+                    Imprimir Tudo (PDF)
+                </button>
+                <button onclick="S._printConsultaPDF('${fSchoolId}','${fStudentId}')" 
+                    style="padding:8px 12px;background:linear-gradient(135deg,#D4A017,#B8860B);color:#fff;border:none;border-radius:7px;font-size:.76rem;cursor:pointer;font-family:'Inter',sans-serif;font-weight:600;display:flex;align-items:center;gap:4px">
+                    <span class="material-icons-outlined" style="font-size:.9rem">badge</span>
+                    Ficha + Passe
+                </button>
+            </div>
+        </div>`;
+
+    } catch(e){
+        console.error('Erro consulta:', e);
+        res.innerHTML = `<div style="text-align:center;padding:14px"><span class="material-icons-outlined" style="font-size:1.5rem;color:#EF4444">error</span><p style="color:rgba(255,255,255,.5);margin-top:6px;font-size:.78rem">${e.message}</p></div>`;
+    }
+};
+
+// =============================================
+// PDF COMPLETO DA CONSULTA
+// =============================================
+S._printConsultaCompletaPDF = async function(schoolId, studentId){
+    try {
+        const studDoc = await db.collection('schools').doc(schoolId).collection('students').doc(studentId).get();
+        if(!studDoc.exists) return alert('Não encontrado');
+        const s = studDoc.data();
+        const schDoc = await db.collection('schools').doc(schoolId).get();
+        const esc = schDoc.exists ? schDoc.data() : {};
+        const st = this.gSt(s.status||'Activo', s.sex);
+        const discs = this.DISC[s.classe]||[];
+        const pg = this.passG(s.classe);
+        const mg = this.maxG(s.classe);
+
+        let dobTx='—';
+        if(s.dob){try{dobTx=new Date(s.dob).toLocaleDateString('pt-AO')}catch(e){dobTx=s.dob}}
+
+        const {jsPDF} = window.jspdf;
+        const doc = new jsPDF('p','mm','a4');
+
+        // ===== PÁGINA 1: FICHA + FALTAS + DÍVIDAS =====
+        doc.setFontSize(11);doc.setFont('helvetica','bold');
+        doc.text('REPÚBLICA DE ANGOLA',105,12,{align:'center'});
+        doc.setFontSize(9);doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO',105,17,{align:'center'});
+        doc.setDrawColor(204,27,43);doc.setLineWidth(.5);doc.line(30,20,180,20);
+        doc.setFontSize(10);doc.setFont('helvetica','bold');
+        doc.text((esc.name||'').toUpperCase(),105,26,{align:'center'});
+        doc.setDrawColor(212,160,23);doc.setLineWidth(.3);doc.line(30,28,180,28);
+
+        doc.setFontSize(13);doc.text('FICHA DO ESTUDANTE',105,36,{align:'center'});
+
+        // Foto
+        if(s.photo){try{doc.addImage(s.photo,'JPEG',20,42,28,33)}catch(e){}}
+        doc.setDrawColor(180);doc.rect(20,42,28,33);
+
+        // Dados
+        let y = 44;
+        const dx = 54;
+        doc.setFontSize(9);
+
+        const pf = (l,v) => {
+            doc.setFont('helvetica','bold');doc.text(l,dx,y);
+            doc.setFont('helvetica','normal');doc.text(String(v||'—'),dx+35,y);
+            y+=5;
+        };
+
+        pf('Nome:',s.name);
+        pf('Sexo:',s.sex);
+        pf('Nascimento:',dobTx);
+        pf('Nacionalidade:',s.nationality||'Angolana');
+        pf('Naturalidade:',s.naturalidade);
+        pf('BI:',s.bi);
+        pf('Processo:',s.process);
+        pf('Matrícula:',s.matricula);
+        pf('Classe:',s.classe);
+        pf('Turma / Turno:',`${s.turma||'—'} / ${s.turno||'—'}`);
+        pf('Estado:',st);
+        pf('Pai:',s.fatherName);
+        pf('Mãe:',s.motherName);
+        pf('Encarregado:',s.guardian);
+        pf('Tel. Enc.:',s.guardianPhone);
+
+        // QR
+        await this.addQR(doc,`SGE|${s.name}|${s.process||''}|${s.classe}`,158,42,28);
+
+        // FALTAS
+        y += 6;
+        doc.setDrawColor(204,27,43);doc.setLineWidth(.3);doc.line(20,y,190,y);
+        y += 5;
+        doc.setFont('helvetica','bold');doc.setFontSize(10);
+        doc.text('PRESENÇAS & FALTAS',20,y);
+        y += 6;
+
+        let fJ2=0,fNJ2=0,pres2=0,atr2=0;
+        try{
+            const att=await db.collection('schools').doc(schoolId).collection('attendance').where('studentId','==',studentId).get();
+            att.forEach(d=>{const st2=d.data().status;if(st2==='P')pres2++;else if(st2==='F')fNJ2++;else if(st2==='J')fJ2++;else if(st2==='A')atr2++});
+        }catch(e){}
+
+        doc.setFontSize(9);doc.setFont('helvetica','normal');
+        doc.text(`Presenças: ${pres2}  |  Faltas não justificadas: ${fNJ2}  |  Faltas justificadas: ${fJ2}  |  Atrasos: ${atr2}  |  Total faltas: ${fJ2+fNJ2}`,20,y);
+
+        // DÍVIDAS
+        y += 8;
+        doc.setFont('helvetica','bold');doc.setFontSize(10);
+        doc.text('SITUAÇÃO FINANCEIRA',20,y);
+        y += 6;
+
+        let vEsp=0,vPag=0;
+        try{
+            const cfg=await db.collection('schools').doc(schoolId).collection('finConfig').get();
+            cfg.forEach(d=>{const c=d.data();let a=false;const lv=c.level||'Todas';
+                if(lv==='Todas')a=true;else if(lv===s.classe)a=true;else if(lv==='Ensino Primário'&&this.isPri(s.classe))a=true;
+                else if(lv==='I Ciclo'){const n=parseInt(s.classe);a=n>=7&&n<=9}else if(lv==='II Ciclo'){const n=parseInt(s.classe);a=n>=10&&n<=13}
+                if(a){let m=1;if(c.period==='Mensal')m=10;else if(c.period==='Trimestral')m=3;else if(c.period==='Semestral')m=2;vEsp+=(c.amount||0)*m}
+            });
+        }catch(e){}
+        try{
+            const fin=await db.collection('schools').doc(schoolId).collection('finances').where('type','==','receita').get();
+            fin.forEach(d=>{const f=d.data();if(f.studentId===studentId||f.studentName===s.name)vPag+=(f.amount||0)});
+        }catch(e){}
+
+        const div2=Math.max(0,vEsp-vPag);
+        doc.setFontSize(9);doc.setFont('helvetica','normal');
+        doc.text(`Valor devido: ${vEsp.toLocaleString('pt-AO')} Kz  |  Valor pago: ${vPag.toLocaleString('pt-AO')} Kz  |  Dívida: ${div2.toLocaleString('pt-AO')} Kz`,20,y);
+
+        if(div2>0){doc.setTextColor(220,38,38);doc.setFont('helvetica','bold');doc.text('DEVEDOR',170,y);doc.setTextColor(0);doc.setFont('helvetica','normal')}
+        else{doc.setTextColor(5,150,105);doc.setFont('helvetica','bold');doc.text('EM DIA',170,y);doc.setTextColor(0);doc.setFont('helvetica','normal')}
+
+        // ===== PÁGINA 2: BOLETIM =====
+        doc.addPage();
+
+        doc.setFontSize(11);doc.setFont('helvetica','bold');
+        doc.text('REPÚBLICA DE ANGOLA',105,12,{align:'center'});
+        doc.setFontSize(9);doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO',105,17,{align:'center'});
+        doc.setDrawColor(204,27,43);doc.setLineWidth(.5);doc.line(30,20,180,20);
+        doc.setFontSize(10);doc.setFont('helvetica','bold');
+        doc.text((esc.name||'').toUpperCase(),105,26,{align:'center'});
+        doc.setDrawColor(212,160,23);doc.setLineWidth(.3);doc.line(30,28,180,28);
+
+        doc.setFontSize(13);doc.text('BOLETIM DE NOTAS — ANUAL',105,36,{align:'center'});
+
+        doc.setFontSize(9);doc.setFont('helvetica','normal');
+        doc.text(`Aluno(a): ${s.name||''} | ${s.classe||''} | Turma ${s.turma||''} | Turno: ${s.turno||''} | Proc: ${s.process||''}`,105,42,{align:'center'});
+
+        // Tabela de notas
+        const gradeData2 = [];
+        let mgT2=0,mgC2=0;
+
+        for(const disc of discs){
+            const dk=disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+            const row2={disc,mt1:null,mt2:null,mt3:null,mf:null};
+            for(let t=1;t<=3;t++){
+                try{const g=await db.collection('schools').doc(schoolId).collection('grades').doc(`${studentId}_${t}_${dk}`).get();
+                if(g.exists&&g.data().mt!=null)row2[`mt${t}`]=g.data().mt}catch(e){}
+            }
+            const mts2=[row2.mt1,row2.mt2,row2.mt3].filter(v=>v!==null);
+            if(mts2.length>0){row2.mf=Math.round(mts2.reduce((a,b)=>a+b,0)/mts2.length);mgT2+=row2.mf;mgC2++}
+            gradeData2.push(row2);
+        }
+
+        const mg2=mgC2>0?Math.round(mgT2/mgC2):null;
+
+        const bodyRows = gradeData2.map(r => {
+            const fmt = v => v!==null?Math.round(v):'-';
+            return [r.disc, fmt(r.mt1), fmt(r.mt2), fmt(r.mt3), fmt(r.mf)];
+        });
+
+        // Linha total
+        bodyRows.push(['MÉDIA GERAL','','','',mg2!==null?mg2:'-']);
+
+        doc.autoTable({
+            startY:48,
+            head:[['Disciplina','1º Trim.','2º Trim.','3º Trim.','Média Final']],
+            body:bodyRows,
+            styles:{fontSize:8,cellPadding:3,halign:'center',lineColor:[220,220,220],lineWidth:.1},
+            headStyles:{fillColor:[248,246,242],textColor:[60,60,60],fontStyle:'bold',lineColor:[200,200,200]},
+            columnStyles:{0:{halign:'left',cellWidth:65}},
+            alternateRowStyles:{fillColor:[254,253,250]},
+            margin:{left:20,right:20},
+            didParseCell:function(data){
+                if(data.section==='body'){
+                    const v=Number(data.cell.raw);
+                    if(!isNaN(v)&&v>0){
+                        data.cell.styles.fontStyle='bold';
+                        data.cell.styles.textColor=v>=pg?[5,130,90]:[220,38,38];
+                    }
+                    if(data.cell.raw==='-')data.cell.styles.textColor=[200,200,200];
+                    // Última linha (total)
+                    if(data.row.index===bodyRows.length-1){
+                        data.cell.styles.fillColor=[248,246,242];
+                        data.cell.styles.fontStyle='bold';
+                        if(data.column.index===0)data.cell.styles.textColor=[212,160,23];
+                    }
+                }
+            }
+        });
+
+        const fy3 = doc.lastAutoTable.finalY + 8;
+
+        if(mg2!==null){
+            doc.setFontSize(10);doc.setFont('helvetica','bold');
+            doc.setTextColor(mg2>=pg?5:220,mg2>=pg?130:38,mg2>=pg?90:38);
+            doc.text(`Resultado: ${this.gSt(mg2>=pg?'Aprovado':'Reprovado',s.sex)} — Média: ${mg2} valores`,105,fy3,{align:'center'});
+            doc.setTextColor(0);
+        }
+
+        // Presenças no boletim
+        doc.setFontSize(8);doc.setFont('helvetica','normal');
+        doc.text(`Presenças: ${pres2} | Faltas: ${fNJ2} | Justificadas: ${fJ2} | Total faltas: ${fJ2+fNJ2}`,105,fy3+6,{align:'center'});
+
+        // Data e assinatura
+        doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`,105,fy3+14,{align:'center'});
+
+        doc.text('O(A) Director(a)',50,fy3+24,{align:'center'});doc.line(20,fy3+26,80,fy3+26);
+        doc.text('Enc. de Educação',160,fy3+24,{align:'center'});doc.line(130,fy3+26,190,fy3+26);
+
+        await this.addQR(doc,`SGE|BOL|${s.name}|MG:${mg2||'—'}`,88,fy3+10,18);
+
+        // ===== PÁGINA 3: PASSE =====
+        doc.addPage();
+
+        doc.setFontSize(10);doc.setFont('helvetica','bold');
+        doc.text('PASSE ESCOLAR',105,16,{align:'center'});
+
+        const pw=90,ph=62,px=(210-pw)/2,py=24;
+
+        doc.setDrawColor(180);doc.roundedRect(px,py,pw,ph,2,2);
+        doc.setFillColor(204,27,43);doc.rect(px,py,pw,2,'F');
+        doc.setFillColor(212,160,23);doc.rect(px,py+2,pw,.8,'F');
+
+        doc.setFontSize(5.5);doc.setTextColor(30);doc.setFont('helvetica','bold');
+        doc.text((esc.name||'').toUpperCase(),px+pw/2,py+7,{align:'center'});
+        doc.setFontSize(7);doc.setTextColor(204,27,43);
+        doc.text('PASSE ESCOLAR',px+pw/2,py+11.5,{align:'center'});
+        doc.setDrawColor(204,27,43);doc.setLineWidth(.3);doc.line(px+3,py+13,px+pw-3,py+13);
+
+        doc.setDrawColor(180);doc.roundedRect(px+3,py+15,17,21,1,1);
+        if(s.photo){try{doc.addImage(s.photo,'JPEG',px+3,py+15,17,21)}catch(e){}}
+
+        const ddx=px+23;
+        doc.setFontSize(6.5);doc.setTextColor(30);doc.setFont('helvetica','bold');
+        doc.text((s.name||'—').substring(0,28),ddx,py+18);
+        doc.setFontSize(5.5);doc.setFont('helvetica','normal');doc.setTextColor(60);
+        doc.text(`Classe: ${s.classe||'—'} | Turma: ${s.turma||'—'}`,ddx,py+22);
+        doc.text(`Turno: ${s.turno||'—'}`,ddx,py+26);
+        doc.text(`Processo: ${s.process||'—'}`,ddx,py+30);
+        doc.text(`Matrícula: ${s.matricula||'—'}`,ddx,py+34);
+        doc.setFontSize(6);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text(`Estado: ${st}`,ddx,py+39);
+        doc.setFillColor(212,160,23);doc.rect(px,py+ph-1.5,pw,1.5,'F');
+
+        await this.addQR(doc,`SGE|${s.name}|${s.process||''}`,px+pw-22,py+16,16);
+
+        doc.setFontSize(7);doc.setTextColor(150);doc.setFont('helvetica','normal');
+        doc.text('✂ Recortar pelo contorno',105,py+ph+8,{align:'center'});
+
+        doc.save(`Consulta_Completa_${(s.name||'aluno').replace(/\s+/g,'_')}.pdf`);
+
+    } catch(e){
+        console.error('Erro PDF:', e);
+        alert('Erro: ' + e.message);
+    }
+};
+
+console.log('✅ Consulta académica completa:');
+console.log('   - Dados pessoais + foto');
+console.log('   - Boletim anual (MT1/MT2/MT3/MF)');
+console.log('   - Faltas (justificadas, não justificadas, total)');
+console.log('   - Dívidas (valor devido, pago, dívida)');
+console.log('   - PDF: Ficha + Boletim + Passe (3 páginas)');
+</script>
+<!-- ================================================
+     FIM CONSULTA COMPLETA
+     ================================================ -->
 </body>
 </html>
