@@ -14462,5 +14462,992 @@ console.log('✅ Pauta corrigida: fundo branco, anual com MT1/MT2/MT3, % correct
 <!-- ================================================
      FIM CORREÇÃO PAUTA
      ================================================ -->
+<!-- ================================================
+     CORREÇÃO — Consulta, Boletins, Impressão
+     ================================================ -->
+<script>
+// =============================================
+// 1. ESCONDER BOTÃO FLUTUANTE QUANDO LOGADO
+//    MOSTRAR CONSULTA SÓ NA LOGIN
+// =============================================
+(function(){
+    const origShowApp = S.showApp;
+    S.showApp = async function(){
+        await origShowApp.call(this);
+        // Esconder botão flutuante
+        const fb = document.getElementById('floatB');
+        if(fb) fb.style.display = 'none';
+    };
+
+    const origShowScr = S.showScr;
+    S.showScr = function(id){
+        origShowScr.call(this, id);
+        const fb = document.getElementById('floatB');
+        if(fb) fb.style.display = 'none';
+    };
+})();
+
+// =============================================
+// 2. CONSULTA PÚBLICA SEM AUTENTICAÇÃO
+//    (Regras Firebase: system e students read: true)
+// =============================================
+S.publicConsulta = async function(){
+    const q = document.getElementById('pub_q')?.value.trim();
+    if(!q) return this.toast('Introduza um número','error');
+
+    const res = document.getElementById('pub_res');
+    res.innerHTML = '<p style="color:rgba(255,255,255,.5);padding:12px;text-align:center;font-size:.82rem">Pesquisando...</p>';
+
+    try {
+        // Buscar em todas as escolas
+        const schoolsSnap = await db.collection('schools').get();
+        let found = false;
+
+        for(const sch of schoolsSnap.docs){
+            if(found) break;
+            const schoolData = sch.data();
+
+            try {
+                const studSnap = await db.collection('schools').doc(sch.id).collection('students').get();
+
+                for(const studDoc of studSnap.docs){
+                    const s = studDoc.data();
+                    if((s.bi||'') === q || (s.process||'') === q || (s.matricula||'') === q){
+                        found = true;
+                        const st = this.gSt(s.status||'Activo', s.sex);
+
+                        res.innerHTML = `
+                            <div style="background:rgba(5,150,105,.08);border:1px solid rgba(5,150,105,.2);border-radius:10px;padding:14px;margin-top:8px">
+                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                                    <div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,${s.sex==='Feminino'?'#EC4899,#BE185D':'#3B82F6,#1D4ED8'});display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.7rem">${(s.name||'E').substring(0,2).toUpperCase()}</div>
+                                    <div>
+                                        <h3 style="color:#fff;font-weight:700;font-size:.92rem">${s.name||'N/D'}</h3>
+                                        <p style="color:rgba(255,255,255,.5);font-size:.72rem">${schoolData.name||''}</p>
+                                    </div>
+                                </div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.78rem;color:#ddd">
+                                    <div><strong style="color:#D4A017">Classe:</strong> ${s.classe||'—'}</div>
+                                    <div><strong style="color:#D4A017">Turma:</strong> ${s.turma||'—'}</div>
+                                    <div><strong style="color:#D4A017">Turno:</strong> ${s.turno||'—'}</div>
+                                    <div><strong style="color:#D4A017">Estado:</strong> <span class="bg ${st.includes('Activ')||st.includes('Aprovad')?'bg-ok':'bg-wr'}">${st}</span></div>
+                                    <div><strong style="color:#D4A017">Processo:</strong> ${s.process||'—'}</div>
+                                    <div><strong style="color:#D4A017">Matrícula:</strong> ${s.matricula||'—'}</div>
+                                </div>
+                                <div style="margin-top:10px;display:flex;gap:6px">
+                                    <button onclick="S._printConsultaPDF('${sch.id}','${studDoc.id}')" style="padding:6px 12px;background:linear-gradient(135deg,#CC1B2B,#D4A017);color:#fff;border:none;border-radius:6px;font-size:.75rem;cursor:pointer;font-family:'Inter',sans-serif;font-weight:600">
+                                        Imprimir Ficha + Passe PDF
+                                    </button>
+                                </div>
+                            </div>`;
+                        break;
+                    }
+                }
+            } catch(e){
+                console.log('Escola sem acesso:', sch.id);
+                continue;
+            }
+        }
+
+        if(!found){
+            res.innerHTML = '<div style="text-align:center;padding:16px"><span class="material-icons-outlined" style="font-size:2rem;color:#EF4444">person_off</span><p style="color:rgba(255,255,255,.5);margin-top:6px;font-size:.82rem">Nenhum estudante encontrado</p></div>';
+        }
+    } catch(e){
+        console.error('Erro consulta:', e);
+        res.innerHTML = `<p style="color:#EF4444;font-size:.82rem;padding:8px">${e.message}</p>`;
+    }
+};
+
+// Imprimir ficha + passe do aluno consultado
+S._printConsultaPDF = async function(schoolId, studentId){
+    try {
+        const studDoc = await db.collection('schools').doc(schoolId).collection('students').doc(studentId).get();
+        if(!studDoc.exists) return alert('Não encontrado');
+        const s = studDoc.data();
+
+        const schDoc = await db.collection('schools').doc(schoolId).get();
+        const esc = schDoc.exists ? schDoc.data() : {};
+
+        const st = this.gSt(s.status||'Activo', s.sex);
+        let dobTx = '—';
+        if(s.dob){ try{ dobTx = new Date(s.dob).toLocaleDateString('pt-AO'); }catch(e){ dobTx = s.dob; } }
+
+        const {jsPDF} = window.jspdf;
+        const doc = new jsPDF('p','mm','a4');
+
+        // === PÁGINA 1: FICHA DO ALUNO ===
+        // Cabeçalho
+        doc.setFontSize(11);doc.setFont('helvetica','bold');doc.setTextColor(0);
+        doc.text('REPÚBLICA DE ANGOLA',105,14,{align:'center'});
+        doc.setFontSize(9);doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO',105,19,{align:'center'});
+        doc.setDrawColor(204,27,43);doc.setLineWidth(.5);doc.line(30,22,180,22);
+        doc.setFontSize(10);doc.setFont('helvetica','bold');
+        doc.text((esc.name||'').toUpperCase(),105,28,{align:'center'});
+        doc.setFontSize(7);doc.setFont('helvetica','normal');
+        doc.text(`${esc.province||''} — ${esc.municipality||''}`,105,32,{align:'center'});
+        doc.setDrawColor(212,160,23);doc.setLineWidth(.3);doc.line(30,34,180,34);
+
+        doc.setFontSize(14);doc.setFont('helvetica','bold');
+        doc.text('FICHA DO ESTUDANTE',105,42,{align:'center'});
+
+        // Foto
+        if(s.photo){
+            try{ doc.addImage(s.photo,'JPEG',20,48,30,35); }catch(e){}
+            doc.setDrawColor(180);doc.rect(20,48,30,35);
+        } else {
+            doc.setDrawColor(180);doc.rect(20,48,30,35);
+            doc.setFontSize(8);doc.setTextColor(150);doc.text('FOTO',35,68,{align:'center'});doc.setTextColor(0);
+        }
+
+        // Dados
+        let y = 50;
+        const dx = 56;
+        doc.setFontSize(9);
+
+        const printField = (label, value) => {
+            doc.setFont('helvetica','bold');doc.text(label,dx,y);
+            doc.setFont('helvetica','normal');doc.text(String(value||'—'),dx+40,y);
+            y+=5;
+        };
+
+        printField('Nome:', s.name);
+        printField('Sexo:', s.sex);
+        printField('Nascimento:', dobTx);
+        printField('Nacionalidade:', s.nationality||'Angolana');
+        printField('Naturalidade:', s.naturalidade);
+        printField('BI:', s.bi);
+        printField('Processo:', s.process);
+        printField('Matrícula:', s.matricula);
+        printField('Classe:', s.classe);
+        printField('Turma:', s.turma);
+        printField('Turno:', s.turno);
+        printField('Estado:', st);
+
+        y += 4;
+        doc.setFont('helvetica','bold');doc.setFontSize(9);
+        doc.text('FILIAÇÃO & ENCARREGADO',20,y);
+        doc.setDrawColor(212,160,23);doc.line(20,y+1,100,y+1);
+        y += 6;
+
+        printField('Pai:', s.fatherName);
+        printField('Mãe:', s.motherName);
+        printField('Encarregado:', s.guardian);
+        printField('Tel. Enc.:', s.guardianPhone);
+
+        // QR
+        await this.addQR(doc,`SGE|${s.name}|${s.process||''}|${s.classe}|${esc.name||''}`,160,48,30);
+
+        // Data
+        y += 8;
+        doc.setFontSize(8);doc.setFont('helvetica','normal');
+        doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`,105,y,{align:'center'});
+
+        // === PÁGINA 2: PASSE (8 por folha mas só 1 aluno) ===
+        doc.addPage();
+
+        // 1 passe no centro
+        const pw=90, ph=62;
+        const px = (210-pw)/2;
+        const py = 30;
+
+        doc.setFontSize(10);doc.setFont('helvetica','bold');
+        doc.text('PASSE ESCOLAR',105,18,{align:'center'});
+        doc.setDrawColor(200);doc.setLineWidth(.2);
+
+        // Desenhar passe
+        doc.setDrawColor(180);doc.roundedRect(px,py,pw,ph,2,2);
+        doc.setFillColor(204,27,43);doc.rect(px,py,pw,2,'F');
+        doc.setFillColor(212,160,23);doc.rect(px,py+2,pw,0.8,'F');
+
+        doc.setFontSize(5.5);doc.setTextColor(30);doc.setFont('helvetica','bold');
+        doc.text((esc.name||'ESCOLA').toUpperCase(),px+pw/2,py+7,{align:'center'});
+        doc.setFontSize(7);doc.setTextColor(204,27,43);
+        doc.text('PASSE ESCOLAR',px+pw/2,py+11.5,{align:'center'});
+        doc.setDrawColor(204,27,43);doc.setLineWidth(.3);doc.line(px+3,py+13,px+pw-3,py+13);
+
+        doc.setDrawColor(180);doc.roundedRect(px+3,py+15,17,21,1,1);
+        if(s.photo){try{doc.addImage(s.photo,'JPEG',px+3,py+15,17,21)}catch(e){}}
+
+        const ddx = px+23;
+        doc.setFontSize(6.5);doc.setTextColor(30);doc.setFont('helvetica','bold');
+        doc.text((s.name||'—').substring(0,28),ddx,py+18);
+        doc.setFontSize(5.5);doc.setFont('helvetica','normal');doc.setTextColor(60);
+        doc.text(`Classe: ${s.classe||'—'} | Turma: ${s.turma||'—'}`,ddx,py+22);
+        doc.text(`Turno: ${s.turno||'—'}`,ddx,py+26);
+        doc.text(`Processo: ${s.process||'—'}`,ddx,py+30);
+        doc.text(`Matrícula: ${s.matricula||'—'}`,ddx,py+34);
+        doc.setFontSize(6);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text(`Estado: ${st}`,ddx,py+39);
+
+        doc.setFillColor(212,160,23);doc.rect(px,py+ph-1.5,pw,1.5,'F');
+
+        await this.addQR(doc,`SGE|${s.name}|${s.process||''}`,px+pw-22,py+16,16);
+
+        // Instrução de corte
+        doc.setFontSize(7);doc.setTextColor(150);doc.setFont('helvetica','normal');
+        doc.text('✂ Recortar pelo contorno',105,py+ph+8,{align:'center'});
+
+        doc.save(`Consulta_${(s.name||'aluno').replace(/\s+/g,'_')}.pdf`);
+
+    } catch(e){
+        console.error('Erro PDF consulta:', e);
+        alert('Erro ao gerar PDF: ' + e.message);
+    }
+};
+
+// =============================================
+// 3. REGRAS FIREBASE — Adicionar acesso público para consulta
+//    NOTA: Estas regras devem ser copiadas para o Firebase Console
+// =============================================
+// As regras devem permitir:
+// - system/config: read sem auth (para verificar setup)
+// - schools: read sem auth (para consulta pública)
+// - schools/{id}/students: read sem auth (para consulta pública)
+// Tudo o resto requer auth
+
+// =============================================
+// 4. BOLETINS POR TRIMESTRE OU ANUAL
+// =============================================
+S._genBoletimPDF = async function(sid, s, esc){
+    // Perguntar período
+    const periodo = prompt('Seleccione o período:\n1 — 1º Trimestre\n2 — 2º Trimestre\n3 — 3º Trimestre\nA — Anual\n\nDigite 1, 2, 3 ou A:','A');
+
+    if(!periodo) return;
+    const isAnual = periodo.toUpperCase() === 'A';
+    const trimNum = isAnual ? null : parseInt(periodo);
+
+    if(!isAnual && (isNaN(trimNum) || trimNum < 1 || trimNum > 3)){
+        return this.toast('Período inválido. Use 1, 2, 3 ou A','error');
+    }
+
+    const {jsPDF} = window.jspdf;
+    const tid = this.tid();
+    const discs = this.DISC[s.classe] || [];
+    const pg = this.passG(s.classe);
+    const mg = this.maxG(s.classe);
+    let yr = '';
+    try{ const ay = await this.getActiveYear(); yr = ay ? ay.year : String(new Date().getFullYear()); }catch(e){ yr = String(new Date().getFullYear()); }
+
+    const periodLabel = isAnual ? 'ANUAL' : `${trimNum}º TRIMESTRE`;
+
+    // Carregar notas
+    const gradeData = [];
+    for(const disc of discs){
+        const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+        const row = {disc, mac1:null,npt1:null,mt1:null, mac2:null,npt2:null,mt2:null, mac3:null,npt3:null,mt3:null, mf:null};
+
+        for(let t=1;t<=3;t++){
+            try{
+                const g = await db.collection('schools').doc(tid).collection('grades').doc(`${sid}_${t}_${dk}`).get();
+                if(g.exists){
+                    const gd = g.data();
+                    if(gd.mac!=null) row[`mac${t}`] = gd.mac;
+                    if(gd.npt!=null) row[`npt${t}`] = gd.npt;
+                    if(gd.mt!=null) row[`mt${t}`] = gd.mt;
+                }
+            }catch(e){}
+        }
+
+        const mts = [1,2,3].map(t=>row[`mt${t}`]).filter(v=>v!==null);
+        if(mts.length > 0) row.mf = Math.round(mts.reduce((a,b)=>a+b,0)/mts.length);
+        gradeData.push(row);
+    }
+
+    // Presenças
+    let tP=0,tF=0;
+    try{const att=await db.collection('schools').doc(tid).collection('attendance').where('studentId','==',sid).get();
+    att.forEach(d=>{if(d.data().status==='P')tP++;else if(d.data().status==='F')tF++})}catch(e){}
+
+    // Gerar 4 boletins por A4
+    const doc = new jsPDF('p','mm','a4');
+    const bw=92, bh=135, bmx=6, bmy=6, bgx=6, bgy=5;
+
+    for(let i=0;i<4;i++){
+        const col=i%2, row2=Math.floor(i/2);
+        const bx=bmx+col*(bw+bgx), by=bmy+row2*(bh+bgy);
+
+        // Borda
+        doc.setDrawColor(180);doc.setLineWidth(.2);doc.rect(bx,by,bw,bh);
+        doc.setFillColor(204,27,43);doc.rect(bx,by,bw,1.5,'F');
+
+        // Cabeçalho
+        doc.setFontSize(4.5);doc.setTextColor(40);doc.setFont('helvetica','bold');
+        doc.text('REPÚBLICA DE ANGOLA',bx+bw/2,by+5,{align:'center'});
+        doc.setFontSize(3.8);doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO',bx+bw/2,by+8,{align:'center'});
+        doc.setFontSize(4.5);doc.setFont('helvetica','bold');
+        doc.text((esc.name||'').toUpperCase().substring(0,42),bx+bw/2,by+12,{align:'center'});
+        doc.setFontSize(3);doc.setFont('helvetica','normal');
+        doc.text(`${esc.province||''} — ${esc.municipality||''}`,bx+bw/2,by+15,{align:'center'});
+
+        doc.setFillColor(212,160,23);doc.rect(bx+2,by+16,bw-4,.4,'F');
+
+        // Título
+        doc.setFontSize(5.5);doc.setTextColor(204,27,43);doc.setFont('helvetica','bold');
+        doc.text(`BOLETIM DE NOTAS — ${periodLabel}`,bx+bw/2,by+20,{align:'center'});
+
+        // Dados aluno
+        doc.setFontSize(3.5);doc.setTextColor(40);doc.setFont('helvetica','normal');
+        doc.text(`Aluno(a): ${(s.name||'—').substring(0,32)}`,bx+3,by+24);
+        doc.text(`${s.classe||''} | Turma: ${s.turma||''} | ${s.turno||''} | Proc: ${s.process||''} | ${yr}`,bx+3,by+27);
+
+        // Tabela
+        const tY = by + 29;
+
+        if(isAnual){
+            // ANUAL: Disciplina | 1ºT | 2ºT | 3ºT | MF
+            doc.setFillColor(240,238,234);doc.rect(bx+2,tY,bw-4,4,'F');
+            doc.setFontSize(2.8);doc.setTextColor(60);doc.setFont('helvetica','bold');
+            doc.text('Disciplina',bx+3,tY+2.8);
+            doc.text('1ºT',bx+40,tY+2.8);doc.text('2ºT',bx+50,tY+2.8);doc.text('3ºT',bx+60,tY+2.8);doc.text('MF',bx+72,tY+2.8);
+
+            let ry = tY + 5;
+            gradeData.forEach((r,idx) => {
+                if(idx%2===0){doc.setFillColor(252,250,248);doc.rect(bx+2,ry-1,bw-4,3.5,'F')}
+                doc.setFontSize(2.8);doc.setFont('helvetica','normal');doc.setTextColor(40);
+                doc.text(r.disc.substring(0,16),bx+3,ry+1.8);
+
+                const pn = (v,x2) => {
+                    if(v===null){doc.setTextColor(200);doc.text('—',x2,ry+1.8);doc.setTextColor(40);return}
+                    const n=Math.round(v);
+                    doc.setTextColor(n>=pg?5:220,n>=pg?130:38,n>=pg?90:38);
+                    doc.setFont('helvetica','bold');doc.text(String(n),x2,ry+1.8);
+                    doc.setFont('helvetica','normal');doc.setTextColor(40);
+                };
+
+                pn(r.mt1,bx+40);pn(r.mt2,bx+50);pn(r.mt3,bx+60);pn(r.mf,bx+72);
+                ry += 3.5;
+            });
+
+            // MG
+            const validMFs = gradeData.filter(r=>r.mf!==null).map(r=>r.mf);
+            const avg = validMFs.length>0?Math.round(validMFs.reduce((a,b)=>a+b,0)/validMFs.length):null;
+            const isP = avg!==null&&avg>=pg;
+
+            ry += 1;
+            doc.setFillColor(248,246,242);doc.rect(bx+2,ry-1,bw-4,4.5,'F');
+            doc.setFontSize(3.5);doc.setFont('helvetica','bold');doc.setTextColor(40);
+            doc.text('MÉDIA GERAL:',bx+3,ry+2.5);
+            if(avg!==null){
+                doc.setTextColor(isP?5:220,isP?130:38,isP?90:38);
+                doc.text(String(avg),bx+bw-10,ry+2.5);
+            }
+            doc.setTextColor(40);
+
+            ry += 6;
+            doc.setFontSize(3);doc.setFont('helvetica','normal');
+            doc.text(`Presenças: ${tP} | Faltas: ${tF}`,bx+3,ry);
+            ry += 3;
+            const obsText = avg===null?'—':(isP?this.gSt('Aprovado',s.sex):this.gSt('Reprovado',s.sex));
+            doc.setFont('helvetica','bold');
+            doc.setTextColor(isP?5:220,isP?130:38,isP?90:38);
+            doc.text(`Estado: ${obsText}`,bx+3,ry);
+            doc.setTextColor(40);
+
+        } else {
+            // TRIMESTRAL: Disciplina | MAC | PT | MT
+            doc.setFillColor(240,238,234);doc.rect(bx+2,tY,bw-4,4,'F');
+            doc.setFontSize(2.8);doc.setTextColor(60);doc.setFont('helvetica','bold');
+            doc.text('Disciplina',bx+3,tY+2.8);
+            doc.text('MAC',bx+45,tY+2.8);doc.text('PT',bx+57,tY+2.8);doc.text('MT',bx+69,tY+2.8);
+
+            let ry = tY + 5;
+            let mgT=0,mgC=0,neg=0;
+
+            gradeData.forEach((r,idx) => {
+                if(idx%2===0){doc.setFillColor(252,250,248);doc.rect(bx+2,ry-1,bw-4,3.5,'F')}
+                doc.setFontSize(2.8);doc.setFont('helvetica','normal');doc.setTextColor(40);
+                doc.text(r.disc.substring(0,18),bx+3,ry+1.8);
+
+                const pn = (v,x2) => {
+                    if(v===null){doc.setTextColor(200);doc.text('—',x2,ry+1.8);doc.setTextColor(40);return}
+                    const n=Math.round(v*10)/10;
+                    doc.setTextColor(n>=pg?5:220,n>=pg?130:38,n>=pg?90:38);
+                    doc.setFont('helvetica','bold');doc.text(String(n),x2,ry+1.8);
+                    doc.setFont('helvetica','normal');doc.setTextColor(40);
+                };
+
+                pn(r[`mac${trimNum}`],bx+45);
+                pn(r[`npt${trimNum}`],bx+57);
+                pn(r[`mt${trimNum}`],bx+69);
+
+                const mt=r[`mt${trimNum}`];
+                if(mt!==null){mgT+=mt;mgC++;if(mt<pg)neg++}
+                ry += 3.5;
+            });
+
+            const avg2=mgC>0?Math.round(mgT/mgC):null;
+            const isP2=avg2!==null&&avg2>=pg;
+
+            ry += 1;
+            doc.setFillColor(248,246,242);doc.rect(bx+2,ry-1,bw-4,4.5,'F');
+            doc.setFontSize(3.5);doc.setFont('helvetica','bold');doc.setTextColor(40);
+            doc.text('MÉDIA TRIMESTRAL:',bx+3,ry+2.5);
+            if(avg2!==null){doc.setTextColor(isP2?5:220,isP2?130:38,isP2?90:38);doc.text(String(avg2),bx+bw-10,ry+2.5)}
+            doc.setTextColor(40);
+
+            ry += 6;
+            doc.setFontSize(3);doc.setFont('helvetica','normal');
+            doc.text(`Presenças: ${tP} | Faltas: ${tF}`,bx+3,ry);
+        }
+
+        // Data e assinaturas
+        let fy2 = by+bh-12;
+        doc.setFontSize(2.8);doc.setFont('helvetica','normal');doc.setTextColor(60);
+        doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO')}`,bx+bw/2,fy2,{align:'center'});
+        fy2 += 4;
+        doc.text('Director(a)',bx+15,fy2,{align:'center'});doc.line(bx+3,fy2+1,bx+27,fy2+1);
+        doc.text('Enc. Educação',bx+bw-15,fy2,{align:'center'});doc.line(bx+bw-27,fy2+1,bx+bw-3,fy2+1);
+
+        doc.setFillColor(204,27,43);doc.rect(bx,by+bh-1,bw,1,'F');
+    }
+
+    // Linhas de corte
+    doc.setDrawColor(200);doc.setLineWidth(.1);doc.setLineDashPattern([2,2],0);
+    doc.line(bmx+bw+bgx/2,0,bmx+bw+bgx/2,297);
+    doc.line(0,bmy+bh+bgy/2,210,bmy+bh+bgy/2);
+    doc.setLineDashPattern([],0);
+
+    doc.save(`Boletim_${periodLabel}_${(s.name||'aluno').replace(/\s+/g,'_')}.pdf`);
+    this.toast(`Boletim ${periodLabel} gerado!`,'success');
+};
+
+// =============================================
+// 5. BOLETINS EM LOTE — Perguntar período
+// =============================================
+S._genBoletinsLote = async function(students, esc){
+    const periodo = prompt('Período dos boletins:\n1 — 1º Trimestre\n2 — 2º Trimestre\n3 — 3º Trimestre\nA — Anual\n\nDigite 1, 2, 3 ou A:','A');
+    if(!periodo) return;
+    const isAnual = periodo.toUpperCase() === 'A';
+    const trimNum = isAnual ? null : parseInt(periodo);
+    if(!isAnual && (isNaN(trimNum)||trimNum<1||trimNum>3)) return this.toast('Período inválido','error');
+
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    const tid = this.tid();
+    const periodLabel = isAnual?'ANUAL':`${trimNum}º TRIMESTRE`;
+
+    let yr='';try{const ay=await this.getActiveYear();yr=ay?ay.year:String(new Date().getFullYear())}catch(e){yr=String(new Date().getFullYear())}
+
+    const bw=92,bh=135,bmx=6,bmy=6,bgx=6,bgy=5;
+    let idx=0;
+
+    for(const s of students){
+        const pos=idx%4;
+        if(pos===0&&idx>0) doc.addPage();
+        const col=pos%2,row2=Math.floor(pos/2);
+        const bx=bmx+col*(bw+bgx),by=bmy+row2*(bh+bgy);
+
+        const discs=this.DISC[s.classe]||[];
+        const pg2=this.passG(s.classe);
+
+        // Carregar notas
+        const gd=[];
+        for(const disc of discs){
+            const dk=disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+            const r={disc,mt1:null,mt2:null,mt3:null,mf:null,mac:null,npt:null,mt:null};
+            for(let t=1;t<=3;t++){
+                try{const g=await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${t}_${dk}`).get();
+                if(g.exists){const dd=g.data();r[`mt${t}`]=dd.mt;if(t===trimNum){r.mac=dd.mac;r.npt=dd.npt;r.mt=dd.mt}}}catch(e){}
+            }
+            const mts=[r.mt1,r.mt2,r.mt3].filter(v=>v!==null);
+            if(mts.length>0)r.mf=Math.round(mts.reduce((a,b)=>a+b,0)/mts.length);
+            gd.push(r);
+        }
+
+        // Desenhar boletim
+        doc.setDrawColor(180);doc.setLineWidth(.2);doc.rect(bx,by,bw,bh);
+        doc.setFillColor(204,27,43);doc.rect(bx,by,bw,1.5,'F');
+
+        doc.setFontSize(4.5);doc.setTextColor(40);doc.setFont('helvetica','bold');
+        doc.text('REPÚBLICA DE ANGOLA',bx+bw/2,by+5,{align:'center'});
+        doc.setFontSize(3.8);doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO',bx+bw/2,by+8,{align:'center'});
+        doc.setFontSize(4.5);doc.setFont('helvetica','bold');
+        doc.text((esc.name||'').toUpperCase().substring(0,42),bx+bw/2,by+12,{align:'center'});
+        doc.setFillColor(212,160,23);doc.rect(bx+2,by+16,bw-4,.4,'F');
+
+        doc.setFontSize(5.5);doc.setTextColor(204,27,43);
+        doc.text(`BOLETIM — ${periodLabel}`,bx+bw/2,by+20,{align:'center'});
+
+        doc.setFontSize(3.5);doc.setTextColor(40);doc.setFont('helvetica','normal');
+        doc.text(`${(s.name||'').substring(0,30)} | ${s.classe||''} | Turma ${s.turma||''} | ${yr}`,bx+3,by+24);
+
+        // Tabela compacta
+        const tY2=by+26;
+        doc.setFillColor(240,238,234);doc.rect(bx+2,tY2,bw-4,3.5,'F');
+        doc.setFontSize(2.5);doc.setTextColor(60);doc.setFont('helvetica','bold');
+
+        if(isAnual){
+            doc.text('Disciplina',bx+3,tY2+2.4);doc.text('1ºT',bx+42,tY2+2.4);doc.text('2ºT',bx+52,tY2+2.4);doc.text('3ºT',bx+62,tY2+2.4);doc.text('MF',bx+74,tY2+2.4);
+        } else {
+            doc.text('Disciplina',bx+3,tY2+2.4);doc.text('MAC',bx+45,tY2+2.4);doc.text('PT',bx+57,tY2+2.4);doc.text('MT',bx+69,tY2+2.4);
+        }
+
+        let ry2=tY2+4.5;
+        let mgT2=0,mgC2=0;
+
+        gd.forEach((r,i2)=>{
+            if(i2%2===0){doc.setFillColor(252,250,248);doc.rect(bx+2,ry2-1,bw-4,3,'F')}
+            doc.setFontSize(2.5);doc.setFont('helvetica','normal');doc.setTextColor(40);
+            doc.text(r.disc.substring(0,17),bx+3,ry2+1.5);
+
+            const pn2=(v,x3)=>{
+                if(v===null){doc.setTextColor(200);doc.text('—',x3,ry2+1.5);doc.setTextColor(40);return}
+                const n2=Math.round(v);
+                doc.setTextColor(n2>=pg2?5:220,n2>=pg2?130:38,n2>=pg2?90:38);
+                doc.setFont('helvetica','bold');doc.text(String(n2),x3,ry2+1.5);
+                doc.setFont('helvetica','normal');doc.setTextColor(40);
+            };
+
+            if(isAnual){pn2(r.mt1,bx+42);pn2(r.mt2,bx+52);pn2(r.mt3,bx+62);pn2(r.mf,bx+74);if(r.mf!==null){mgT2+=r.mf;mgC2++}}
+            else{pn2(r.mac,bx+45);pn2(r.npt,bx+57);pn2(r.mt,bx+69);if(r.mt!==null){mgT2+=r.mt;mgC2++}}
+
+            ry2+=3;
+        });
+
+        const avg3=mgC2>0?Math.round(mgT2/mgC2):null;
+        ry2+=1;
+        doc.setFillColor(248,246,242);doc.rect(bx+2,ry2-1,bw-4,4,'F');
+        doc.setFontSize(3);doc.setFont('helvetica','bold');doc.setTextColor(40);
+        doc.text('MÉDIA:',bx+3,ry2+2);
+        if(avg3!==null){doc.setTextColor(avg3>=pg2?5:220,avg3>=pg2?130:38,avg3>=pg2?90:38);doc.text(String(avg3),bx+bw-10,ry2+2)}
+
+        // Rodapé
+        doc.setTextColor(40);doc.setFont('helvetica','normal');doc.setFontSize(2.5);
+        doc.text(`${esc.municipality||''}, ${new Date().toLocaleDateString('pt-AO')}`,bx+bw/2,by+bh-5,{align:'center'});
+        doc.setFillColor(204,27,43);doc.rect(bx,by+bh-1,bw,1,'F');
+
+        idx++;
+    }
+
+    // Linhas de corte
+    const tp2=doc.getNumberOfPages();
+    for(let p=1;p<=tp2;p++){
+        doc.setPage(p);doc.setDrawColor(200);doc.setLineWidth(.1);doc.setLineDashPattern([2,2],0);
+        doc.line(bmx+bw+bgx/2,0,bmx+bw+bgx/2,297);
+        doc.line(0,bmy+bh+bgy/2,210,bmy+bh+bgy/2);
+        doc.setLineDashPattern([],0);
+    }
+
+    doc.save(`Boletins_${periodLabel}_${students.length}alunos.pdf`);
+    this.toast(`${students.length} boletins (${periodLabel}) gerados!`,'success');
+};
+
+// =============================================
+// 6. ACTUALIZAR REGRAS FIREBASE PARA CONSULTA
+// =============================================
+// COPIAR PARA: Firebase Console → Firestore → Rules
+/*
+match /schools/{schoolId} {
+    allow read: if true;  // <-- Permite consulta pública
+    
+    match /students/{studentId} {
+        allow read: if true;  // <-- Permite consulta pública
+        allow write: if request.auth != null;
+    }
+}
+*/
+
+console.log('✅ Correções aplicadas:');
+console.log('   - Consulta pública funcional (sem auth para leitura)');
+console.log('   - Botão flutuante removido após login');
+console.log('   - Boletins: trimestral OU anual');
+console.log('   - PDF consulta: ficha + passe do aluno');
+console.log('');
+console.log('⚠️ IMPORTANTE: Actualizar regras do Firestore para permitir leitura pública');
+console.log('   schools/{id}: allow read: if true');
+console.log('   schools/{id}/students/{sid}: allow read: if true');
+</script>
+<!-- ================================================
+     FIM CORREÇÕES CONSULTA/BOLETINS
+     ================================================ -->
+<!-- ================================================
+     CORREÇÃO — Consulta + Notificações + Eventos
+     ================================================ -->
+<script>
+// =============================================
+// 1. CONSULTA PÚBLICA ROBUSTA (sem autenticação)
+// =============================================
+S.publicConsulta = async function(){
+    const q = document.getElementById('pub_q')?.value.trim();
+    if(!q){ this.toast('Introduza BI, processo ou matrícula','error'); return; }
+
+    const res = document.getElementById('pub_res');
+    res.innerHTML = '<p style="color:rgba(255,255,255,.5);padding:12px;text-align:center;font-size:.8rem"><span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:1rem;vertical-align:middle;margin-right:4px">hourglass_empty</span>Pesquisando...</p>';
+
+    try {
+        let found = false;
+        let foundStudent = null;
+        let foundSchool = null;
+        let foundSchoolId = null;
+        let foundStudentId = null;
+
+        // Buscar escolas
+        const schoolsSnap = await db.collection('schools').get();
+
+        for(const schDoc of schoolsSnap.docs){
+            if(found) break;
+
+            try {
+                // Buscar TODOS os estudantes desta escola
+                const studSnap = await db.collection('schools').doc(schDoc.id).collection('students').get();
+
+                studSnap.forEach(sDoc => {
+                    if(found) return;
+                    const s = sDoc.data();
+
+                    // Comparar com BI, processo ou matrícula
+                    if((s.bi && s.bi === q) || (s.process && s.process === q) || (s.matricula && s.matricula === q)){
+                        found = true;
+                        foundStudent = s;
+                        foundSchool = schDoc.data();
+                        foundSchoolId = schDoc.id;
+                        foundStudentId = sDoc.id;
+                    }
+                });
+            } catch(schoolErr){
+                console.log('Escola inacessível:', schDoc.id, schoolErr.message);
+            }
+        }
+
+        if(!found){
+            res.innerHTML = `<div style="text-align:center;padding:18px">
+                <span class="material-icons-outlined" style="font-size:2rem;color:#EF4444">person_off</span>
+                <p style="color:rgba(255,255,255,.5);margin-top:8px;font-size:.8rem">Nenhum estudante encontrado com "${q}"</p>
+                <p style="color:rgba(255,255,255,.3);font-size:.7rem;margin-top:4px">Verifique o número e tente novamente</p>
+            </div>`;
+            return;
+        }
+
+        const s = foundStudent;
+        const esc = foundSchool;
+        const st = this.gSt(s.status || 'Activo', s.sex);
+
+        res.innerHTML = `
+            <div style="background:rgba(5,150,105,.08);border:1px solid rgba(5,150,105,.2);border-radius:10px;padding:14px;margin-top:8px">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                    <div style="width:42px;height:42px;border-radius:10px;background:linear-gradient(135deg,${s.sex==='Feminino'?'#EC4899,#BE185D':'#3B82F6,#1D4ED8'});display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.7rem;overflow:hidden">
+                        ${s.photo ? `<img src="${s.photo}" style="width:100%;height:100%;object-fit:cover">` : (s.name||'E').substring(0,2).toUpperCase()}
+                    </div>
+                    <div>
+                        <h3 style="color:#fff;font-weight:700;font-size:.92rem">${s.name || 'N/D'}</h3>
+                        <p style="color:rgba(255,255,255,.5);font-size:.72rem">${esc.name || ''}</p>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:.78rem;color:#ddd">
+                    <div><strong style="color:#D4A017">Classe:</strong> ${s.classe || '—'}</div>
+                    <div><strong style="color:#D4A017">Turma:</strong> ${s.turma || '—'}</div>
+                    <div><strong style="color:#D4A017">Turno:</strong> ${s.turno || '—'}</div>
+                    <div><strong style="color:#D4A017">Estado:</strong> <span class="bg ${st.includes('Activ')||st.includes('Aprovad')?'bg-ok':'bg-wr'}">${st}</span></div>
+                    <div><strong style="color:#D4A017">Processo:</strong> ${s.process || '—'}</div>
+                    <div><strong style="color:#D4A017">Matrícula:</strong> ${s.matricula || '—'}</div>
+                </div>
+                <div style="margin-top:10px">
+                    <button onclick="S._printConsultaPDF('${foundSchoolId}','${foundStudentId}')" 
+                        style="padding:8px 14px;background:linear-gradient(135deg,#CC1B2B,#D4A017);color:#fff;border:none;border-radius:7px;font-size:.78rem;cursor:pointer;font-family:'Inter',sans-serif;font-weight:600;display:flex;align-items:center;gap:4px">
+                        <span class="material-icons-outlined" style="font-size:.9rem">print</span>
+                        Imprimir Ficha + Passe
+                    </button>
+                </div>
+            </div>`;
+
+    } catch(e){
+        console.error('Erro na consulta pública:', e);
+        res.innerHTML = `<div style="text-align:center;padding:14px">
+            <span class="material-icons-outlined" style="font-size:1.5rem;color:#EF4444">error</span>
+            <p style="color:rgba(255,255,255,.5);margin-top:6px;font-size:.78rem">Erro: ${e.message}</p>
+            <p style="color:rgba(255,255,255,.3);font-size:.7rem;margin-top:4px">Se o erro persistir, contacte a administração da escola</p>
+        </div>`;
+    }
+};
+
+// =============================================
+// 2. SISTEMA DE NOTIFICAÇÕES NO HEADER
+// =============================================
+
+// Adicionar ícone de notificação ao header
+(function(){
+    const origShowApp = S.showApp;
+    S.showApp = async function(){
+        await origShowApp.call(this);
+
+        // Esconder botão flutuante
+        const fb = document.getElementById('floatB');
+        if(fb) fb.style.display = 'none';
+
+        // Adicionar ícone de notificações ao header
+        const hdrRight = document.querySelector('#hdr > div:last-child');
+        if(hdrRight && !document.getElementById('notifBtn')){
+            const notifHtml = `
+                <div style="position:relative;display:inline-flex">
+                    <button class="hdr-b" onclick="S._toggleNotifPanel()" id="notifBtn" title="Notificações">
+                        <span class="material-icons-outlined">notifications</span>
+                    </button>
+                    <span id="notifBadge" style="display:none;position:absolute;top:2px;right:2px;width:8px;height:8px;background:#DC2626;border-radius:50%;border:2px solid #fff"></span>
+                </div>
+            `;
+            hdrRight.insertAdjacentHTML('afterbegin', notifHtml);
+        }
+
+        // Iniciar listeners de notificações
+        this._initNotifications();
+    };
+})();
+
+// Painel de notificações
+S._toggleNotifPanel = function(){
+    let panel = document.getElementById('notifPanel');
+
+    if(panel){
+        panel.remove();
+        return;
+    }
+
+    panel = document.createElement('div');
+    panel.id = 'notifPanel';
+    panel.style.cssText = 'position:fixed;top:56px;right:10px;width:340px;max-height:420px;background:#fff;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:2000;overflow:hidden;border:1px solid #E5E7EB';
+
+    panel.innerHTML = `
+        <div style="padding:12px 16px;border-bottom:1px solid #E5E7EB;display:flex;justify-content:space-between;align-items:center">
+            <h3 style="font-weight:700;font-size:.9rem">Notificações</h3>
+            <button onclick="document.getElementById('notifPanel')?.remove()" style="background:none;border:none;cursor:pointer;color:#6B7280;font-size:1.1rem">✕</button>
+        </div>
+        <div id="notifContent" style="max-height:300px;overflow-y:auto;padding:8px">
+            <p style="text-align:center;color:#9CA3AF;padding:20px;font-size:.8rem">Carregando...</p>
+        </div>
+        <div style="padding:8px 16px;border-top:1px solid #E5E7EB">
+            <div id="eventsSection">
+                <h4 style="font-weight:700;font-size:.78rem;color:#D4A017;margin-bottom:6px">📅 Próximos Eventos (48h)</h4>
+                <div id="eventsList"><p style="color:#9CA3AF;font-size:.72rem">Carregando...</p></div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(panel);
+
+    // Carregar conteúdo
+    this._loadNotifContent();
+    this._loadUpcomingEvents();
+
+    // Fechar ao clicar fora
+    setTimeout(() => {
+        const closeHandler = (e) => {
+            if(!panel.contains(e.target) && e.target.id !== 'notifBtn' && !e.target.closest('#notifBtn')){
+                panel.remove();
+                document.removeEventListener('click', closeHandler);
+            }
+        };
+        document.addEventListener('click', closeHandler);
+    }, 100);
+};
+
+// Dark mode support para painel
+(function(){
+    const style = document.createElement('style');
+    style.textContent = `html.dark #notifPanel{background:#1A1A2E;border-color:#2A2A3E}
+        html.dark #notifPanel h3,html.dark #notifPanel h4{color:#E0E0E0}
+        html.dark #notifPanel div{border-color:#2A2A3E!important}`;
+    document.head.appendChild(style);
+})();
+
+// Iniciar listeners de notificações
+S._initNotifications = function(){
+    const tid = this.tid();
+    if(!tid) return;
+
+    // Ouvir mensagens não lidas
+    try {
+        const unsub = db.collection('schools').doc(tid).collection('messages')
+            .where('recipientId', '==', this.user?.uid)
+            .where('read', '==', false)
+            .onSnapshot(snap => {
+                const badge = document.getElementById('notifBadge');
+                if(badge){
+                    badge.style.display = snap.size > 0 ? 'block' : 'none';
+                }
+            });
+        this._ls.push(unsub);
+    } catch(e){
+        // Fallback: verificar mensagens gerais
+        try {
+            const unsub = db.collection('schools').doc(tid).collection('messages')
+                .orderBy('createdAt', 'desc')
+                .limit(5)
+                .onSnapshot(snap => {
+                    let unread = 0;
+                    snap.forEach(d => {
+                        const m = d.data();
+                        if(m.read === false && (m.recipientId === this.user?.uid || m.recipientId === 'all')){
+                            unread++;
+                        }
+                    });
+                    const badge = document.getElementById('notifBadge');
+                    if(badge) badge.style.display = unread > 0 ? 'block' : 'none';
+                });
+            this._ls.push(unsub);
+        } catch(e2){}
+    }
+};
+
+// Carregar conteúdo de notificações
+S._loadNotifContent = async function(){
+    const el = document.getElementById('notifContent');
+    if(!el) return;
+    const tid = this.tid();
+    if(!tid){ el.innerHTML = '<p style="text-align:center;color:#9CA3AF;padding:14px;font-size:.78rem">Sem notificações</p>'; return; }
+
+    try {
+        const snap = await db.collection('schools').doc(tid).collection('messages')
+            .orderBy('createdAt', 'desc').limit(10).get();
+
+        if(snap.empty){
+            el.innerHTML = '<p style="text-align:center;color:#9CA3AF;padding:14px;font-size:.78rem">Sem notificações</p>';
+            return;
+        }
+
+        let h = '';
+        snap.forEach(doc => {
+            const m = doc.data();
+            const isForMe = m.recipientId === this.user?.uid || m.recipientId === 'all';
+            const isUnread = m.read === false && isForMe;
+            const time = m.createdAt ? new Date(m.createdAt.toDate()).toLocaleString('pt-AO',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+
+            h += `<div style="padding:8px 10px;border-radius:6px;margin-bottom:4px;cursor:pointer;${isUnread?'background:rgba(204,27,43,.04);border-left:3px solid #CC1B2B':'background:transparent;border-left:3px solid transparent'}" 
+                onclick="${isUnread?`db.collection('schools').doc('${tid}').collection('messages').doc('${doc.id}').update({read:true})`:''};this.style.borderLeftColor='transparent';this.style.background='transparent'">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                    <div style="flex:1;min-width:0">
+                        <p style="font-weight:${isUnread?'700':'500'};font-size:.78rem;color:${isUnread?'#1F2937':'#6B7280'}">${m.senderName||'Sistema'}</p>
+                        <p style="font-size:.72rem;color:#9CA3AF;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px">${(m.text||'').substring(0,50)}</p>
+                    </div>
+                    <span style="font-size:.62rem;color:#9CA3AF;flex-shrink:0;margin-left:6px">${time}</span>
+                </div>
+            </div>`;
+        });
+
+        el.innerHTML = h;
+    } catch(e){
+        el.innerHTML = '<p style="text-align:center;color:#9CA3AF;padding:14px;font-size:.78rem">Sem notificações</p>';
+    }
+};
+
+// Carregar eventos próximos (48 horas)
+S._loadUpcomingEvents = async function(){
+    const el = document.getElementById('eventsList');
+    if(!el) return;
+
+    const tid = this.tid();
+    const events = [];
+    const now = new Date();
+    const in48h = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+
+    // Verificar ano lectivo e trimestres
+    try {
+        const ay = await this.getActiveYear();
+        if(ay){
+            events.push({
+                icon: '📅',
+                text: `Ano Lectivo ${ay.year} — Activo`,
+                type: 'info'
+            });
+
+            // Verificar trimestres
+            for(let t = 1; t <= 3; t++){
+                const trim = ay[`trimestre${t}`];
+                if(trim?.active){
+                    events.push({
+                        icon: '📝',
+                        text: `${t}º Trimestre — Aberto`,
+                        type: 'active'
+                    });
+                }
+            }
+        }
+    } catch(e){}
+
+    // Verificar alunos devedores
+    if(tid){
+        try {
+            const studSnap = await db.collection('schools').doc(tid).collection('students').get();
+            let devedores = 0;
+            studSnap.forEach(d => { if(d.data().financialStatus === 'Devedor') devedores++; });
+            if(devedores > 0){
+                events.push({
+                    icon: '⚠️',
+                    text: `${devedores} aluno${devedores>1?'s':''} devedor${devedores>1?'es':''}`,
+                    type: 'warning'
+                });
+            }
+        } catch(e){}
+    }
+
+    // Verificar faltas excessivas (últimos 7 dias)
+    if(tid){
+        try {
+            const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+            const attSnap = await db.collection('schools').doc(tid).collection('attendance')
+                .where('status', '==', 'F').get();
+
+            // Contar por aluno
+            const faltasPorAluno = {};
+            attSnap.forEach(d => {
+                const a = d.data();
+                if(a.date >= weekAgo){
+                    faltasPorAluno[a.studentName || a.studentId] = (faltasPorAluno[a.studentName || a.studentId] || 0) + 1;
+                }
+            });
+
+            const alunosComMuitasFaltas = Object.entries(faltasPorAluno).filter(([,n]) => n >= 3);
+            if(alunosComMuitasFaltas.length > 0){
+                events.push({
+                    icon: '🔴',
+                    text: `${alunosComMuitasFaltas.length} aluno${alunosComMuitasFaltas.length>1?'s':''} com 3+ faltas esta semana`,
+                    type: 'alert'
+                });
+            }
+        } catch(e){}
+    }
+
+    // Sem eventos especiais
+    if(events.length === 0){
+        events.push({icon: '✅', text: 'Tudo em ordem', type: 'ok'});
+    }
+
+    let h = '';
+    events.forEach(ev => {
+        const bgColor = ev.type === 'warning' ? 'rgba(217,119,6,.06)' : 
+                        ev.type === 'alert' ? 'rgba(220,38,38,.06)' : 
+                        ev.type === 'active' ? 'rgba(5,150,105,.06)' : 'transparent';
+        h += `<div style="padding:5px 8px;border-radius:5px;background:${bgColor};margin-bottom:3px;font-size:.72rem;display:flex;align-items:center;gap:6px">
+            <span>${ev.icon}</span>
+            <span>${ev.text}</span>
+        </div>`;
+    });
+
+    el.innerHTML = h;
+};
+
+// =============================================
+// 3. GARANTIR QUE O BOTÃO FLUTUANTE FICA ESCONDIDO
+// =============================================
+(function(){
+    const origNav = S.nav;
+    S.nav = function(page){
+        origNav.call(this, page);
+        const fb = document.getElementById('floatB');
+        if(fb) fb.style.display = 'none';
+    };
+})();
+
+console.log('✅ Consulta pública corrigida (regras Firebase actualizadas)');
+console.log('✅ Notificações no header com badge');
+console.log('✅ Eventos próximos (48h): ano lectivo, trimestres, devedores, faltas');
+console.log('✅ Botão flutuante removido após login');
+console.log('');
+console.log('⚠️ IMPORTANTE: Actualize as regras do Firestore e Storage no Firebase Console!');
+</script>
+<!-- ================================================
+     FIM CORREÇÕES
+     ================================================ -->
 </body>
 </html>
