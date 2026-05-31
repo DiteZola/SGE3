@@ -18853,7 +18853,408 @@ console.log('   Fichas PDF com TODOS os dados');
 <!-- ================================================
      FIM FORMULÁRIOS COMPLETOS
      ================================================ -->
+<!-- ================================================
+     CERTIFICADO E DECLARAÇÃO — MODELO OFICIAL EXACTO
+     ================================================ -->
+<script>
+// =============================================
+// ALÍNEAS POR NÍVEL
+// =============================================
+S._getCertAlienea = function(classe){
+    const n = parseInt(classe);
+    if(n <= 6) return {alinea: 'b)', nivel: 'o Ensino Primário'};
+    if(n <= 9) return {alinea: 'c)', nivel: 'o I Ciclo do Ensino Secundário Geral'};
+    return {alinea: 'e)', nivel: 'o II Ciclo do Ensino Secundário Geral'};
+};
 
+// =============================================
+// CERTIFICADO — FORMATO OFICIAL EXACTO
+// =============================================
+S._genCertificadosLote = async function(students, esc){
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    const tid = this.tid();
+
+    let yr = '';
+    try{const ay = await this.getActiveYear(); yr = ay ? ay.year : String(new Date().getFullYear())}
+    catch(e){yr = String(new Date().getFullYear())}
+
+    // Insígnia
+    const insignia = await this._getInsigniaForPDF();
+
+    for(let si = 0; si < students.length; si++){
+        if(si > 0) doc.addPage();
+        const s = students[si];
+        const isFem = s.sex === 'Feminino';
+        const cn = parseInt(s.classe);
+
+        // Nível e alínea
+        const {alinea, nivel} = this._getCertAlienea(s.classe);
+
+        // Classes para tabela
+        let certClasses = [];
+        if(cn <= 6) certClasses = ['1ª Classe','2ª Classe','3ª Classe','4ª Classe','5ª Classe','6ª Classe'];
+        else if(cn <= 9) certClasses = ['7ª Classe','8ª Classe','9ª Classe'];
+        else if(cn <= 12) certClasses = ['10ª Classe','11ª Classe','12ª Classe'];
+        else certClasses = ['10ª Classe','11ª Classe','12ª Classe','13ª Classe'];
+
+        // Curso (II Ciclo)
+        const curso = await this._getStudentCurso(s.id, s.classe, s.turma);
+        const cursoText = (cn >= 10 && curso) ? `, na área de ${curso}` : '';
+
+        // Director
+        const dirName = esc.directorName || '________________________________';
+        const schoolFullName = `${esc.number ? 'Complexo Escolar Nº '+esc.number+' ' : ''}${esc.name || '________________________'}`;
+        const decreto = esc.decree || '________________________';
+
+        // Datas
+        let dobText = '____/____/________';
+        if(s.dob){try{dobText = new Date(s.dob).toLocaleDateString('pt-AO',{day:'2-digit',month:'2-digit',year:'numeric'})}catch(e){dobText=s.dob}}
+
+        let biDateText = '____/____/________';
+        if(s.biDate){try{biDateText = new Date(s.biDate).toLocaleDateString('pt-AO',{day:'2-digit',month:'2-digit',year:'numeric'})}catch(e){biDateText=s.biDate}}
+
+        // ===== CABEÇALHO =====
+        if(insignia){try{doc.addImage(insignia,'PNG',92,6,16,16)}catch(e){}}
+
+        doc.setFontSize(13);
+        doc.setFont('helvetica','bold');
+        doc.setTextColor(0);
+        doc.text('REPÚBLICA DE ANGOLA', 105, 26, {align:'center'});
+
+        doc.setFontSize(11);
+        doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO', 105, 33, {align:'center'});
+
+        doc.setFontSize(18);
+        doc.setFont('helvetica','bold');
+        doc.text('CERTIFICADO', 105, 44, {align:'center'});
+
+        // ===== CORPO =====
+        // Carregar notas para calcular média
+        const allGradesMap = {};
+        let grandTotal = 0, grandCount = 0;
+        const allDiscsSet = new Set();
+
+        for(const classe of certClasses){
+            allGradesMap[classe] = {};
+            const discs = this.DISC[classe] || [];
+            discs.forEach(d => allDiscsSet.add(d));
+
+            let histG = {};
+            try{const hDoc = await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(classe).get();
+            if(hDoc.exists && hDoc.data().grades) histG = hDoc.data().grades}catch(e){}
+
+            for(const disc of discs){
+                let nota = null;
+                if(histG[disc] !== undefined) nota = Number(histG[disc]);
+                else {
+                    const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+                    let mts = [];
+                    for(let t=1;t<=3;t++){try{const gDoc=await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${t}_${dk}`).get();if(gDoc.exists&&gDoc.data().mt!=null)mts.push(gDoc.data().mt)}catch(e){}}
+                    if(mts.length > 0) nota = mts.reduce((a,b)=>a+b,0)/mts.length;
+                }
+                if(nota !== null){
+                    allGradesMap[classe][disc] = Math.round(nota);
+                    grandTotal += Math.round(nota);
+                    grandCount++;
+                }
+            }
+        }
+
+        const grandAvg = grandCount > 0 ? Math.round(grandTotal / grandCount) : 0;
+
+        // Texto do corpo
+        const bodyText = `${dirName}, Director${isFem?'a':''} do ${schoolFullName}, criado sob o ${decreto}, ao abrigo do disposto na alínea ${alinea} do artigo 109.º da Lei n.º 32/20 de 12 de Agosto, certifica que ${s.name || '________________________'}, filh${isFem?'a':'o'} de ${s.fatherName || '________________________'} e de ${s.motherName || '________________________'}, nascid${isFem?'a':'o'} aos ${dobText}, natural de ${s.naturalidade || '________________'}, município de ${s.naturalidade || '________________'}, província ${s.provOrigem || 'de ________________'}, portador${isFem?'a':''} do B.I. n.º ${s.bi || '________________'}, passado pelo Arquivo de Identificação ${s.biLocal ? 'de '+s.biLocal : 'de ________________'} aos ${biDateText}, concluiu no ano lectivo ${yr} ${nivel}${cursoText}, conforme consta do processo individual n.º ${s.process || '________________'}, com a média final de ${grandAvg} valores, obtida pelas seguintes classificações por disciplina:`;
+
+        doc.setFontSize(10);
+        doc.setFont('helvetica','normal');
+        const bodyLines = doc.splitTextToSize(bodyText, 170);
+        doc.text(bodyLines, 20, 54);
+
+        let ty = 54 + bodyLines.length * 4.5 + 5;
+
+        // ===== TABELA DE NOTAS =====
+        const allDiscs = [...allDiscsSet];
+        const shortClasses = certClasses.map(c => {
+            const num = c.replace(/[^0-9]/g,'');
+            return num + '.ª Classe';
+        });
+
+        const tableHead = ['Disciplinas', ...shortClasses, 'Média Final', 'Média Por Extenso'];
+        const tableBody = [];
+
+        allDiscs.forEach(disc => {
+            const row = [disc];
+            let dTotal = 0, dCount = 0;
+
+            certClasses.forEach(classe => {
+                const nota = allGradesMap[classe]?.[disc];
+                const classDiscs = this.DISC[classe] || [];
+                if(nota !== undefined){
+                    row.push(nota);
+                    dTotal += nota;
+                    dCount++;
+                } else {
+                    row.push('-');
+                }
+            });
+
+            const discAvg = dCount > 0 ? Math.round(dTotal / dCount) : '-';
+            row.push(discAvg);
+            row.push(discAvg !== '-' ? this._intToWords(discAvg) : '-');
+            tableBody.push(row);
+        });
+
+        doc.autoTable({
+            startY: ty,
+            head: [tableHead],
+            body: tableBody,
+            styles: {fontSize:7.5, cellPadding:2, halign:'center', lineColor:[180,180,180], lineWidth:0.15, font:'helvetica'},
+            headStyles: {fillColor:[245,243,240], textColor:[30,30,30], fontStyle:'bold', fontSize:7, lineColor:[160,160,160], lineWidth:0.2},
+            columnStyles: {
+                0: {halign:'left', cellWidth:40},
+                [certClasses.length+2]: {halign:'left', cellWidth:28, fontSize:6.5}
+            },
+            alternateRowStyles: {fillColor:[252,251,249]},
+            margin: {left:18, right:18},
+            didParseCell: function(data){
+                if(data.section === 'body'){
+                    if(data.column.index >= 1 && data.column.index <= certClasses.length + 1){
+                        if(data.cell.raw === '-') data.cell.styles.textColor = [190,190,190];
+                        else data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            }
+        });
+
+        ty = doc.lastAutoTable.finalY + 6;
+
+        // Verificar espaço
+        if(ty > 235){ doc.addPage(); ty = 20; }
+
+        // ===== TEXTO FINAL =====
+        const processoNum = s.process || '________________';
+
+        const finalText = `Para efeitos legais, é passado o presente CERTIFICADO, que consta no livro de registo n.º ${processoNum}, folha ${certClasses[certClasses.length-1].replace(' Classe','')}-${yr}, assinado por mim e autenticado com carimbo à óleo / selo branco em uso neste estabelecimento de ensino.`;
+
+        doc.setFontSize(10);
+        doc.setFont('helvetica','normal');
+        const finalLines = doc.splitTextToSize(finalText, 170);
+        doc.text(finalLines, 20, ty);
+
+        ty += finalLines.length * 4.5 + 8;
+
+        // Local e data
+        const dataText = `${esc.name ? esc.name.toUpperCase() : (esc.municipality||'LUANDA').toUpperCase()}, AOS ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'}).toUpperCase()}`;
+        doc.setFontSize(10);
+        doc.setFont('helvetica','normal');
+        doc.text(dataText, 105, ty, {align:'center'});
+
+        ty += 10;
+
+        // Conferido por
+        doc.setFontSize(10);
+        doc.text('Conferido por:', 20, ty);
+
+        ty += 14;
+
+        // Linha assinatura
+        doc.setDrawColor(0);
+        doc.setLineWidth(0.3);
+        doc.line(55, ty, 155, ty);
+
+        ty += 8;
+
+        // O Director
+        doc.setFontSize(11);
+        doc.setFont('helvetica','bold');
+        doc.text('O Director', 105, ty, {align:'center'});
+
+        ty += 6;
+
+        // Linha nome
+        doc.line(55, ty, 155, ty);
+
+        ty += 5;
+
+        // Nome do director
+        doc.setFontSize(10);
+        doc.setFont('helvetica','normal');
+        doc.text(dirName, 105, ty, {align:'center'});
+
+        // QR Code
+        await this.addQR(doc, `SGE-NG|CERT|${s.name}|${nivel}|MF:${grandAvg}|${yr}|${esc.name||''}`, 170, ty-28, 18);
+    }
+
+    const fn = students.length === 1
+        ? `Certificado_${students[0].name?.replace(/\s+/g,'_')||'aluno'}.pdf`
+        : `Certificados_Lote_${students.length}.pdf`;
+
+    doc.save(fn);
+    this.log('documents',`Certificados: ${students.length}`);
+    this.toast(`${students.length} certificado(s) gerado(s)!`,'success');
+};
+
+// =============================================
+// DECLARAÇÃO — FORMATO OFICIAL EXACTO
+// Subdirector Pedagógico (esquerda) + Director (direita)
+// =============================================
+S._genDeclaracoesLote = async function(students, esc){
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    const tid = this.tid();
+    const insignia = await this._getInsigniaForPDF();
+
+    let yr = '';
+    try{const ay=await this.getActiveYear();yr=ay?ay.year:String(new Date().getFullYear())}catch(e){yr=String(new Date().getFullYear())}
+
+    // Buscar nome do subdirector pedagógico
+    let subPedName = '________________________________';
+    try{
+        const usersSnap = await db.collection('users').where('tenantId','==',tid).get();
+        usersSnap.forEach(d=>{
+            if(d.data().role === 'subdiretor_pedagogico' && d.data().active) subPedName = d.data().name;
+        });
+    }catch(e){}
+
+    for(let si = 0; si < students.length; si++){
+        if(si > 0) doc.addPage();
+        const s = students[si];
+        const isFem = s.sex === 'Feminino';
+        const pg = this.passG(s.classe);
+        const cn = parseInt(s.classe);
+        const {alinea, nivel} = this._getCertAlienea(s.classe);
+
+        const dirName = esc.directorName || '________________________________';
+        const schoolFullName = `${esc.number ? 'Complexo Escolar Nº '+esc.number+' ' : ''}${esc.name || '________________________'}`;
+        const decreto = esc.decree || '________________________';
+        const curso = await this._getStudentCurso(s.id, s.classe, s.turma);
+        const cursoText = (cn >= 10 && curso) ? `, na área de ${curso}` : '';
+
+        let dobText = '____/____/________';
+        if(s.dob){try{dobText=new Date(s.dob).toLocaleDateString('pt-AO',{day:'2-digit',month:'2-digit',year:'numeric'})}catch(e){dobText=s.dob}}
+
+        let biDateText = '____/____/________';
+        if(s.biDate){try{biDateText=new Date(s.biDate).toLocaleDateString('pt-AO',{day:'2-digit',month:'2-digit',year:'numeric'})}catch(e){biDateText=s.biDate}}
+
+        // ===== CABEÇALHO =====
+        if(insignia){try{doc.addImage(insignia,'PNG',92,6,16,16)}catch(e){}}
+
+        doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(0);
+        doc.text('REPÚBLICA DE ANGOLA',105,26,{align:'center'});
+        doc.setFontSize(11);doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO',105,33,{align:'center'});
+        doc.setFontSize(18);doc.setFont('helvetica','bold');
+        doc.text('DECLARAÇÃO',105,44,{align:'center'});
+
+        // ===== CORPO =====
+        // Carregar notas
+        const discs = this.DISC[s.classe]||[];
+        const gradeRows = [];
+        let notaTotal=0, notaCount=0;
+
+        let histG={};
+        try{const h=await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(s.classe).get();if(h.exists&&h.data().grades)histG=h.data().grades}catch(e){}
+
+        for(const disc of discs){
+            let nota=null;
+            if(histG[disc]!==undefined) nota=Number(histG[disc]);
+            else{const dk=disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');let mts=[];for(let t=1;t<=3;t++){try{const g=await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${t}_${dk}`).get();if(g.exists&&g.data().mt!=null)mts.push(g.data().mt)}catch(e){}}if(mts.length>0)nota=mts.reduce((a,b)=>a+b,0)/mts.length}
+            const rounded=nota!==null?Math.round(nota):null;
+            if(rounded!==null){notaTotal+=rounded;notaCount++}
+            gradeRows.push([disc, rounded!==null?rounded:'-', rounded!==null?this._intToWords(rounded):'-']);
+        }
+
+        const avg = notaCount>0?Math.round(notaTotal/notaCount):0;
+
+        // Texto - mesmo formato do certificado mas com "declara"
+        const bodyText = `${dirName}, Director${isFem?'a':''} do ${schoolFullName}, criado sob o ${decreto}, ao abrigo do disposto na alínea ${alinea} do artigo 109.º da Lei n.º 32/20 de 12 de Agosto, declara que ${s.name||'________________________'}, filh${isFem?'a':'o'} de ${s.fatherName||'________________________'} e de ${s.motherName||'________________________'}, nascid${isFem?'a':'o'} aos ${dobText}, natural de ${s.naturalidade||'________________'}, município de ${s.naturalidade||'________________'}, província ${s.provOrigem||'de ________________'}, portador${isFem?'a':''} do B.I. n.º ${s.bi||'________________'}, passado pelo Arquivo de Identificação ${s.biLocal?'de '+s.biLocal:'de ________________'} aos ${biDateText}, frequentou no ano lectivo ${yr} ${nivel}${cursoText}, na ${s.classe||'____'}, turma "${s.turma||'__'}", turno da ${s.turno||'______'}, neste estabelecimento de ensino, tendo obtido as seguintes classificações:`;
+
+        doc.setFontSize(10);doc.setFont('helvetica','normal');
+        const bodyLines=doc.splitTextToSize(bodyText,170);
+        doc.text(bodyLines,20,54);
+        let ty=54+bodyLines.length*4.5+4;
+
+        // Tabela
+        doc.autoTable({
+            startY:ty,
+            head:[['Disciplina','Nota','Por Extenso']],
+            body:gradeRows,
+            styles:{fontSize:8,cellPadding:2.5,halign:'center',lineColor:[180,180,180],lineWidth:0.15},
+            headStyles:{fillColor:[245,243,240],textColor:[30,30,30],fontStyle:'bold',lineColor:[160,160,160]},
+            columnStyles:{0:{halign:'left',cellWidth:65},2:{halign:'left',cellWidth:45}},
+            margin:{left:25,right:25},
+            didParseCell:function(data){
+                if(data.section==='body'&&data.column.index===1){
+                    if(data.cell.raw==='-')data.cell.styles.textColor=[190,190,190];
+                    else{data.cell.styles.fontStyle='bold';const v=Number(data.cell.raw);if(!isNaN(v))data.cell.styles.textColor=v>=pg?[0,100,0]:[200,0,0]}
+                }
+            }
+        });
+
+        ty=doc.lastAutoTable.finalY+4;
+
+        // Média
+        doc.setFontSize(10);doc.setFont('helvetica','bold');
+        doc.text(`Média Final: ${avg} (${this._intToWords(avg)})`,105,ty,{align:'center'});
+
+        ty+=5;
+        doc.setFont('helvetica','normal');
+        const finalText=`Para efeitos legais, é passada a presente DECLARAÇÃO, assinada e autenticada com carimbo em uso neste estabelecimento de ensino.`;
+        const fLines=doc.splitTextToSize(finalText,170);
+        doc.text(fLines,20,ty);
+
+        ty+=fLines.length*4.5+8;
+
+        // Local e data
+        const dataText = `${esc.name ? esc.name.toUpperCase() : (esc.municipality||'LUANDA').toUpperCase()}, AOS ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'}).toUpperCase()}`;
+        doc.setFontSize(10);
+        doc.text(dataText,105,ty,{align:'center'});
+
+        ty+=14;
+
+        // ===== ASSINATURAS =====
+        // Subdirector Pedagógico (ESQUERDA) + Director (DIREITA)
+
+        // Esquerda - SubDirector Pedagógico
+        doc.setDrawColor(0);doc.setLineWidth(0.3);
+        doc.line(20,ty,90,ty);
+        doc.setFontSize(9);doc.setFont('helvetica','bold');
+        doc.text('O Subdirector Pedagógico',55,ty+5,{align:'center'});
+        doc.setFont('helvetica','normal');doc.setFontSize(8);
+        doc.line(20,ty+10,90,ty+10);
+        doc.text(subPedName,55,ty+15,{align:'center'});
+
+        // Direita - Director
+        doc.line(120,ty,190,ty);
+        doc.setFontSize(9);doc.setFont('helvetica','bold');
+        doc.text('O Director',155,ty+5,{align:'center'});
+        doc.setFont('helvetica','normal');doc.setFontSize(8);
+        doc.line(120,ty+10,190,ty+10);
+        doc.text(dirName,155,ty+15,{align:'center'});
+
+        // QR
+        await this.addQR(doc,`SGE|DECL|${s.name}|${s.classe}|${yr}`,96,ty-2,15);
+    }
+
+    const fn=students.length===1?`Declaracao_${students[0].name?.replace(/\s+/g,'_')}.pdf`:`Declaracoes_Lote_${students.length}.pdf`;
+    doc.save(fn);
+    this.toast(`${students.length} declaração(ões) gerada(s)!`,'success');
+};
+
+console.log('✅ Certificado e Declaração — Modelo oficial angolano exacto');
+console.log('   Certificado:');
+console.log('   - Cabeçalho: República + Ministério + CERTIFICADO');
+console.log('   - Alínea b) para 6ª, c) para 9ª, e) para 12ª/13ª');
+console.log('   - Assinatura: Conferido por → O Director → Nome');
+console.log('   Declaração:');
+console.log('   - Mesmo texto mas com "declara" em vez de "certifica"');
+console.log('   - SubDir. Pedagógico (esquerda) + Director (direita)');
+</script>
+<!-- ================================================
+     FIM CERTIFICADO/DECLARAÇÃO OFICIAL
+     ================================================ -->
 
 </body>
 </html>
