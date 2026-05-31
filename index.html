@@ -16468,5 +16468,969 @@ console.log('   - Minhas Turmas: acesso rápido');
 <!-- ================================================
      FIM PROFESSOR FILTRADO
      ================================================ -->
+<!-- ================================================
+     FICHAS PDF + EVENTOS + MENSAGENS PRIVADAS
+     ================================================ -->
+<script>
+// =============================================
+// 1. BOTÃO FICHA PDF NAS LISTAS DE ALUNOS/STAFF
+// =============================================
+
+// Sobrescrever lista de estudantes para adicionar botão ficha
+(function(){
+    const origLoadStudents = S._loadStudentsRealtime || S._routes['students'];
+    
+    S._routes['students'] = function(){
+        const pc = document.getElementById('pgC'), tid = this.tid();
+        if(!tid && !this.hasRole('super_admin')) return this.pgAccessDenied();
+
+        pc.innerHTML = `<div class="fade">
+            <div class="fb fw gm mb-l">
+                <div><h2 class="fw8 fs-l">Estudantes</h2><p class="tm fs-s">Cadastrar e gerir estudantes</p></div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap">
+                    <button class="btn btn-o btn-s" onclick="S.expStudXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+                    <button class="btn btn-r" onclick="S.mdStud()"><span class="material-icons-outlined">person_add</span>Novo</button>
+                </div>
+            </div>
+            <div id="stSt" class="g4 mb-l"></div>
+            <div class="cd p0" style="overflow:hidden">
+                <div style="padding:10px;border-bottom:1px solid #E5E7EB;display:flex;gap:6px;flex-wrap:wrap">
+                    <div style="flex:1;min-width:140px;position:relative"><span class="material-icons-outlined" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:#9CA3AF;font-size:.95rem">search</span>
+                    <input type="text" class="fi" placeholder="Pesquisar..." oninput="S.filterTbl('stTb',this.value)" style="padding-left:30px"></div>
+                    <select class="fs" style="width:auto;min-width:100px" onchange="S._fStCl(this.value)"><option value="">Todas</option>${(this.school?this.clsFor(this.school.type):this.allCls()).map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
+                </div>
+                <div class="ovx"><table class="tbl"><thead><tr><th>Nº</th><th>Estudante</th><th>Processo</th><th>Classe</th><th>Turma</th><th>Sexo</th><th>Estado</th><th class="tc">Acções</th></tr></thead>
+                <tbody id="stTb"><tr><td colspan="8" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div>
+            </div>
+        </div>`;
+
+        if(!tid) return;
+
+        const unsub = db.collection('schools').doc(tid).collection('students').onSnapshot(snap => {
+            const tb = document.getElementById('stTb'), stEl = document.getElementById('stSt');
+            if(!tb) return;
+            if(snap.empty){ tb.innerHTML = '<tr><td colspan="8" class="tc tm" style="padding:40px">Nenhum estudante</td></tr>'; return; }
+
+            let results = [];
+            snap.forEach(d => results.push({id:d.id,...d.data()}));
+            results.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+
+            let h='', n=0, tot=0, mc=0, fm=0;
+            results.forEach(s => {
+                n++; tot++;
+                if(s.sex==='Masculino') mc++; else fm++;
+                const st2 = this.gSt(s.status||'Activo',s.sex);
+                const sc = {'Activo':'bg-ok','Aprovado':'bg-ok','Aprovada':'bg-ok','Reprovado':'bg-er','Reprovada':'bg-er','Transferido':'bg-wr','Transferida':'bg-wr','Desistente':'bg-er','Finalista':'bg-in'};
+
+                h += `<tr data-cl="${s.classe||''}">
+                    <td>${n}</td>
+                    <td class="fw7 fs-s">${s.name||'N/D'}</td>
+                    <td class="fs-s">${s.process||'—'}</td>
+                    <td class="fw7">${s.classe||'—'}</td>
+                    <td><span class="bg bg-in">${s.turma||'—'}</span></td>
+                    <td>${s.sex==='Feminino'?'F':'M'}</td>
+                    <td><span class="bg ${sc[st2]||'bg-in'}">${st2}</span></td>
+                    <td><div style="display:flex;gap:2px;justify-content:center">
+                        <button class="btn btn-gh btn-s" onclick="S.viewStud('${s.id}')" title="Ver"><span class="material-icons-outlined" style="font-size:.8rem">visibility</span></button>
+                        <button class="btn btn-gh btn-s" onclick="S.editStud('${s.id}')" title="Editar"><span class="material-icons-outlined" style="font-size:.8rem">edit</span></button>
+                        <button class="btn btn-gh btn-s" onclick="S._printStudFicha('${s.id}')" title="Ficha PDF"><span class="material-icons-outlined" style="font-size:.8rem;color:#D4A017">picture_as_pdf</span></button>
+                    </div></td></tr>`;
+            });
+
+            tb.innerHTML = h;
+            if(stEl) stEl.innerHTML = `
+                <div class="stc"><div class="st-ic" style="background:rgba(204,27,43,.08);color:#CC1B2B"><span class="material-icons-outlined">people</span></div><div><div class="st-v">${tot}</div><div class="st-l">Total</div></div></div>
+                <div class="stc"><div class="st-ic" style="background:rgba(59,130,246,.08);color:#3B82F6"><span class="material-icons-outlined">man</span></div><div><div class="st-v">${mc}</div><div class="st-l">Masculinos</div></div></div>
+                <div class="stc"><div class="st-ic" style="background:rgba(236,72,153,.08);color:#EC4899"><span class="material-icons-outlined">woman</span></div><div><div class="st-v">${fm}</div><div class="st-l">Femininos</div></div></div>`;
+        });
+        this._ls.push(unsub);
+    };
+})();
+
+// =============================================
+// FICHA DO ALUNO EM PDF
+// =============================================
+S._printStudFicha = async function(studId){
+    const tid = this.tid();
+    try {
+        const sDoc = await db.collection('schools').doc(tid).collection('students').doc(studId).get();
+        if(!sDoc.exists) return this.toast('Não encontrado','error');
+        const s = sDoc.data();
+        let esc = this.school || {};
+        try{ const sd = await db.collection('schools').doc(tid).get(); if(sd.exists) esc = sd.data(); }catch(e){}
+
+        const st = this.gSt(s.status||'Activo', s.sex);
+        let dob = '—'; if(s.dob){ try{ dob = new Date(s.dob).toLocaleDateString('pt-AO'); }catch(e){ dob = s.dob; } }
+
+        const {jsPDF} = window.jspdf;
+        const doc = new jsPDF('p','mm','a4');
+
+        // Cabeçalho
+        this._pdfHdr(doc, esc);
+        doc.setFontSize(14); doc.setFont('helvetica','bold');
+        doc.text('FICHA INDIVIDUAL DO ESTUDANTE', 105, 42, {align:'center'});
+        doc.setDrawColor(212,160,23); doc.setLineWidth(.3); doc.line(40,44,170,44);
+
+        // Foto
+        if(s.photo){ try{ doc.addImage(s.photo,'JPEG',20,50,28,33); }catch(e){} }
+        doc.setDrawColor(180); doc.rect(20,50,28,33);
+
+        // Dados
+        let y = 52; const dx = 54;
+        doc.setFontSize(9);
+        const pf = (l,v) => { doc.setFont('helvetica','bold'); doc.text(l,dx,y); doc.setFont('helvetica','normal'); doc.text(String(v||'—'),dx+38,y); y+=5; };
+
+        pf('Nome:', s.name);
+        pf('Sexo:', s.sex);
+        pf('Nascimento:', dob);
+        pf('Nacionalidade:', s.nationality||'Angolana');
+        pf('Naturalidade:', `${s.naturalidade||''} ${s.provOrigem?'('+s.provOrigem+')':''}`);
+        pf('BI:', `${s.bi||'—'} ${s.biDate?'em '+s.biDate:''} ${s.biLocal?'— '+s.biLocal:''}`);
+        pf('NIF:', s.nif);
+        pf('Sangue:', s.bloodType);
+        pf('Nec. Especiais:', s.specialNeeds||'Nenhuma');
+        pf('Saúde:', s.healthCondition);
+
+        y += 3;
+        doc.setFont('helvetica','bold'); doc.setFontSize(10);
+        doc.text('DADOS ACADÉMICOS', 20, y);
+        doc.setDrawColor(204,27,43); doc.line(20,y+1,100,y+1);
+        y += 6; doc.setFontSize(9);
+
+        pf('Processo:', s.process);
+        pf('Matrícula:', s.matricula);
+        pf('Classe:', s.classe);
+        pf('Turma:', s.turma);
+        pf('Turno:', s.turno);
+        pf('Ingresso:', s.yearIngresso);
+        pf('Escola Ant.:', s.previousSchool);
+        pf('Estado:', st);
+        pf('Financeiro:', s.financialStatus||'Regular');
+
+        y += 3;
+        doc.setFont('helvetica','bold'); doc.setFontSize(10);
+        doc.text('FILIAÇÃO & ENCARREGADO', 20, y);
+        doc.setDrawColor(212,160,23); doc.line(20,y+1,120,y+1);
+        y += 6; doc.setFontSize(9);
+
+        pf('Pai:', s.fatherName);
+        pf('Mãe:', s.motherName);
+        pf('Encarregado:', s.guardian);
+        pf('Parentesco:', s.guardianRelation);
+        pf('BI Enc.:', s.guardianBI);
+        pf('Tel 1:', s.guardianPhone);
+        pf('Tel 2:', s.guardianPhone2);
+        pf('Email Enc.:', s.guardianEmail);
+        pf('Profissão:', s.guardianJob);
+
+        y += 3;
+        doc.setFont('helvetica','bold'); doc.setFontSize(10);
+        doc.text('MORADA', 20, y);
+        y += 5; doc.setFontSize(9); doc.setFont('helvetica','normal');
+        doc.text([s.addrRua, s.addrBairro, s.addrMunicipality, s.addrProvince].filter(Boolean).join(', ') || '—', 20, y);
+
+        if(s.observations){ y+=6; doc.setFont('helvetica','bold'); doc.text('Observações:', 20, y); doc.setFont('helvetica','normal'); y+=4; doc.text(s.observations.substring(0,200), 20, y, {maxWidth:170}); }
+
+        // QR
+        await this.addQR(doc, `SGE|${s.name}|${s.process||''}|${s.classe}`, 162, 50, 26);
+
+        // Data
+        y = Math.max(y+10, 260);
+        doc.setFontSize(8);
+        doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`, 105, y, {align:'center'});
+
+        doc.save(`Ficha_${(s.name||'aluno').replace(/\s+/g,'_')}.pdf`);
+        this.toast('Ficha PDF gerada!','success');
+    } catch(e){ this.toast('Erro: '+e.message,'error'); }
+};
+
+// =============================================
+// FICHA DO FUNCIONÁRIO EM PDF
+// =============================================
+S._printStaffFicha = async function(staffId){
+    const tid = this.tid();
+    try {
+        const fDoc = await db.collection('schools').doc(tid).collection('staff').doc(staffId).get();
+        if(!fDoc.exists) return this.toast('Não encontrado','error');
+        const f = fDoc.data();
+        let esc = this.school || {};
+
+        const {jsPDF} = window.jspdf;
+        const doc = new jsPDF('p','mm','a4');
+
+        this._pdfHdr(doc, esc);
+        doc.setFontSize(14); doc.setFont('helvetica','bold');
+        doc.text('FICHA DO FUNCIONÁRIO', 105, 42, {align:'center'});
+        doc.setDrawColor(212,160,23); doc.line(40,44,170,44);
+
+        if(f.photo){ try{ doc.addImage(f.photo,'JPEG',20,50,28,33); }catch(e){} }
+        doc.setDrawColor(180); doc.rect(20,50,28,33);
+
+        let y = 52; const dx = 54;
+        doc.setFontSize(9);
+        const pf = (l,v) => { doc.setFont('helvetica','bold'); doc.text(l,dx,y); doc.setFont('helvetica','normal'); doc.text(String(v||'—'),dx+35,y); y+=5; };
+
+        pf('Nome:', f.name);
+        pf('Sexo:', f.sex);
+        pf('BI:', f.bi);
+        pf('NIF:', f.nif);
+        pf('Nascimento:', f.dob);
+        pf('Cargo:', f.cargo);
+        pf('Função:', f.funcao);
+        pf('Departamento:', f.department);
+        pf('Formação:', f.formacao);
+        pf('Nº Mecano.:', f.mecNumber);
+        pf('Telefone:', f.phone);
+        pf('Email:', f.email);
+        pf('Salário:', f.salary ? Number(f.salary).toLocaleString('pt-AO')+' Kz' : '—');
+        pf('Turno:', f.shift);
+        pf('Morada:', f.address);
+
+        await this.addQR(doc, `SGE|STAFF|${f.name}|${f.cargo}`, 162, 50, 26);
+
+        doc.setFontSize(8);
+        doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`, 105, 260, {align:'center'});
+
+        doc.save(`Ficha_${(f.name||'func').replace(/\s+/g,'_')}.pdf`);
+        this.toast('Ficha PDF gerada!','success');
+    } catch(e){ this.toast('Erro: '+e.message,'error'); }
+};
+
+// Adicionar botão ficha na vista do funcionário
+(function(){
+    const origViewStaff = S.viewStaff;
+    S.viewStaff = async function(id){
+        await origViewStaff.call(this, id);
+        setTimeout(() => {
+            const ft = document.getElementById('mFt');
+            if(ft && !ft.innerHTML.includes('Ficha PDF')){
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-g btn-s';
+                btn.innerHTML = '<span class="material-icons-outlined" style="font-size:.8rem">picture_as_pdf</span>Ficha PDF';
+                btn.onclick = () => { S.cModal(); S._printStaffFicha(id); };
+                ft.insertBefore(btn, ft.firstChild);
+            }
+        }, 200);
+    };
+})();
+
+// =============================================
+// 2. MENU EVENTOS / PLANO DE ACTIVIDADES
+// =============================================
+
+// Adicionar ao menu
+(function(){
+    const origMenu = S.getMenu;
+    S.getMenu = function(role){
+        const m = origMenu.call(this, role);
+        if(['diretor','subdiretor_pedagogico','subdiretor_administrativo','secretaria'].includes(role)){
+            const commIdx = m.findIndex(i => i.s === 'COMUNICAÇÃO');
+            if(commIdx >= 0){
+                m.splice(commIdx, 0, {s:'PLANEAMENTO',p:'events',i:'event',l:'Eventos & Actividades'});
+            } else {
+                m.push({s:'PLANEAMENTO',p:'events',i:'event',l:'Eventos & Actividades'});
+            }
+        }
+        return m;
+    };
+})();
+
+S._routes['events'] = function(){ S.pgEvents(); };
+S._titles['events'] = 'Eventos & Actividades';
+
+S.pgEvents = function(){
+    if(!this.hasRole('diretor','subdiretor_pedagogico','subdiretor_administrativo','secretaria','super_admin'))
+        return this.pgAccessDenied();
+
+    const pc = document.getElementById('pgC');
+    const tid = this.tid();
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Eventos & Plano de Actividades</h2><p class="tm fs-s">Planeamento trimestral e anual</p></div>
+            <button class="btn btn-r" onclick="S._mdEvent()"><span class="material-icons-outlined">add</span>Novo Evento</button>
+        </div>
+
+        <!-- Filtro -->
+        <div class="cd mb-m" style="padding:10px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <select class="fs" style="width:auto;min-width:110px" onchange="S._filterEvents(this.value)" id="evFilter">
+                    <option value="">Todos</option>
+                    <option value="proximo">Próximos (48h)</option>
+                    <option value="trimestral">Trimestral</option>
+                    <option value="anual">Anual</option>
+                    <option value="reuniao">Reuniões</option>
+                    <option value="avaliacao">Avaliações</option>
+                </select>
+                <input type="text" class="fi" placeholder="Pesquisar..." oninput="S.filterTbl('evTb',this.value)" style="flex:1;min-width:120px">
+            </div>
+        </div>
+
+        <!-- Alertas próximos -->
+        <div id="evAlerts" class="mb-m"></div>
+
+        <!-- Lista -->
+        <div class="cd p0" style="overflow:hidden">
+            <div class="ovx"><table class="tbl"><thead><tr>
+                <th>Data</th><th>Evento</th><th>Tipo</th><th>Período</th><th>Responsável</th><th>Estado</th><th class="tc">Acções</th>
+            </tr></thead><tbody id="evTb"><tr><td colspan="7" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div>
+        </div>
+    </div>`;
+
+    if(!tid) return;
+    this._loadEvents(tid);
+};
+
+S._loadEvents = function(tid){
+    const unsub = db.collection('schools').doc(tid).collection('events')
+        .orderBy('date','asc').onSnapshot(snap => {
+        const tb = document.getElementById('evTb');
+        const alertsEl = document.getElementById('evAlerts');
+        if(!tb) return;
+
+        if(snap.empty){
+            tb.innerHTML = '<tr><td colspan="7" class="tc tm" style="padding:40px"><span class="material-icons-outlined" style="font-size:2rem;display:block;margin-bottom:6px;color:#D4A017">event</span>Nenhum evento</td></tr>';
+            if(alertsEl) alertsEl.innerHTML = '';
+            return;
+        }
+
+        const now = new Date();
+        const in48h = new Date(now.getTime() + 48*60*60*1000);
+        let h = '', alerts = '';
+
+        snap.forEach(doc => {
+            const ev = doc.data();
+            const evDate = ev.date ? new Date(ev.date+'T00:00:00') : null;
+            const isPast = evDate && evDate < now;
+            const isNear = evDate && evDate >= now && evDate <= in48h;
+            const daysLeft = evDate ? Math.ceil((evDate - now) / (1000*60*60*24)) : null;
+
+            const typeColors = {'reuniao':'#2563EB','avaliacao':'#DC2626','actividade':'#059669','formacao':'#7C3AED','outro':'#6B7280'};
+            const typeLabels = {'reuniao':'Reunião','avaliacao':'Avaliação','actividade':'Actividade','formacao':'Formação','outro':'Outro'};
+            const statusColors = {'pendente':'#F59E0B','concluido':'#059669','cancelado':'#DC2626'};
+
+            // Alerta
+            if(isNear && ev.status !== 'concluido' && ev.status !== 'cancelado'){
+                alerts += `<div class="cd mb-s" style="padding:10px;border-left:3px solid #DC2626;background:rgba(220,38,38,.04)">
+                    <div class="fb"><div>
+                        <span style="color:#DC2626;font-weight:700;font-size:.78rem">⚠️ ${ev.title||'Evento'}</span>
+                        <span class="fs-s tm" style="margin-left:6px">${ev.date||''} — ${daysLeft===0?'HOJE':daysLeft===1?'AMANHÃ':`em ${daysLeft} dias`}</span>
+                    </div>
+                    <span class="bg bg-wr" style="font-size:.58rem">${daysLeft===0?'HOJE':'Próximo'}</span></div>
+                </div>`;
+            }
+
+            h += `<tr data-type="${ev.type||''}" style="${isPast?'opacity:.6':''}">
+                <td class="fs-s fw7" style="white-space:nowrap;${isNear?'color:#DC2626':''}">${ev.date||'—'}${isNear?' ⚠️':''}</td>
+                <td class="fw7 fs-s">${ev.title||'—'}</td>
+                <td><span class="bg" style="background:${typeColors[ev.type]||'#6B7280'}20;color:${typeColors[ev.type]||'#6B7280'};font-size:.6rem">${typeLabels[ev.type]||ev.type||'—'}</span></td>
+                <td class="fs-s">${ev.period||'—'}</td>
+                <td class="fs-s">${ev.responsible||'—'}</td>
+                <td><span class="bg" style="background:${statusColors[ev.status]||'#F59E0B'}20;color:${statusColors[ev.status]||'#F59E0B'};font-size:.6rem">${ev.status==='concluido'?'Concluído':ev.status==='cancelado'?'Cancelado':'Pendente'}</span></td>
+                <td class="tc"><div style="display:flex;gap:2px;justify-content:center">
+                    <button class="btn btn-gh btn-s" onclick="S._editEvent('${doc.id}')" title="Editar"><span class="material-icons-outlined" style="font-size:.8rem">edit</span></button>
+                    <button class="btn btn-gh btn-s" onclick="S._toggleEventStatus('${doc.id}','${ev.status}')" title="Alterar estado"><span class="material-icons-outlined" style="font-size:.8rem;color:#059669">check_circle</span></button>
+                    <button class="btn btn-gh btn-s" onclick="S._delEvent('${doc.id}')" title="Eliminar"><span class="material-icons-outlined" style="font-size:.8rem;color:#DC2626">delete</span></button>
+                </div></td>
+            </tr>`;
+        });
+
+        tb.innerHTML = h;
+        if(alertsEl) alertsEl.innerHTML = alerts;
+    });
+    this._ls.push(unsub);
+};
+
+S._filterEvents = function(type){
+    const rows = document.querySelectorAll('#evTb tr');
+    rows.forEach(r => {
+        if(!type || type === '') { r.style.display = ''; return; }
+        if(type === 'proximo'){
+            r.style.display = r.querySelector('td')?.textContent.includes('⚠️') ? '' : 'none';
+        } else {
+            r.style.display = r.dataset.type === type ? '' : 'none';
+        }
+    });
+};
+
+S._mdEvent = function(edit){
+    const d = edit || {};
+    this.oModal(edit?'Editar Evento':'Novo Evento',`<form onsubmit="return false"><div class="g2">
+        <div class="fg gc2"><label class="fl">Título *</label><input type="text" id="ev_title" class="fi" value="${d.title||''}" required></div>
+        <div class="fg"><label class="fl">Data *</label><input type="date" id="ev_date" class="fi" value="${d.date||''}" required></div>
+        <div class="fg"><label class="fl">Hora</label><input type="time" id="ev_time" class="fi" value="${d.time||''}"></div>
+        <div class="fg"><label class="fl">Tipo</label><select id="ev_type" class="fs">
+            <option ${d.type==='actividade'?'selected':''} value="actividade">Actividade</option>
+            <option ${d.type==='reuniao'?'selected':''} value="reuniao">Reunião</option>
+            <option ${d.type==='avaliacao'?'selected':''} value="avaliacao">Avaliação</option>
+            <option ${d.type==='formacao'?'selected':''} value="formacao">Formação</option>
+            <option ${d.type==='outro'?'selected':''} value="outro">Outro</option>
+        </select></div>
+        <div class="fg"><label class="fl">Período</label><select id="ev_period" class="fs">
+            <option ${d.period==='1º Trimestre'?'selected':''}>1º Trimestre</option>
+            <option ${d.period==='2º Trimestre'?'selected':''}>2º Trimestre</option>
+            <option ${d.period==='3º Trimestre'?'selected':''}>3º Trimestre</option>
+            <option ${d.period==='Anual'?'selected':''}>Anual</option>
+        </select></div>
+        <div class="fg"><label class="fl">Responsável</label><input type="text" id="ev_resp" class="fi" value="${d.responsible||this.ud?.name||''}"></div>
+        <div class="fg"><label class="fl">Local</label><input type="text" id="ev_local" class="fi" value="${d.local||''}"></div>
+        <div class="fg gc2"><label class="fl">Descrição</label><textarea id="ev_desc" class="fi" rows="3">${d.description||''}</textarea></div>
+    </div></form>`,`<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
+    <button class="btn btn-r" onclick="S._saveEvent('${d._id||''}')"><span class="material-icons-outlined">save</span>${edit?'Actualizar':'Criar Evento'}</button>`);
+};
+
+S._saveEvent = async function(editId){
+    const title = document.getElementById('ev_title')?.value.trim();
+    const date = document.getElementById('ev_date')?.value;
+    if(!title || !date) return this.toast('Título e data obrigatórios','error');
+
+    const data = {
+        title, date,
+        time: document.getElementById('ev_time')?.value||'',
+        type: document.getElementById('ev_type')?.value||'actividade',
+        period: document.getElementById('ev_period')?.value||'Anual',
+        responsible: document.getElementById('ev_resp')?.value.trim()||'',
+        local: document.getElementById('ev_local')?.value.trim()||'',
+        description: document.getElementById('ev_desc')?.value.trim()||'',
+        status: 'pendente',
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    try {
+        if(editId){
+            await db.collection('schools').doc(this.tid()).collection('events').doc(editId).update(data);
+            this.toast('Evento actualizado!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            data.createdBy = this.user.uid;
+            data.createdByName = this.ud?.name||'';
+            await db.collection('schools').doc(this.tid()).collection('events').add(data);
+            this.toast('Evento criado!','success');
+        }
+        this.cModal();
+    } catch(e){ this.toast(e.message,'error'); }
+};
+
+S._editEvent = async function(id){
+    try{const d=await db.collection('schools').doc(this.tid()).collection('events').doc(id).get();
+    if(d.exists) this._mdEvent({_id:id,...d.data()})}catch(e){this.toast(e.message,'error')}
+};
+
+S._toggleEventStatus = async function(id, current){
+    const newStatus = current==='pendente'?'concluido':current==='concluido'?'pendente':'pendente';
+    try{await db.collection('schools').doc(this.tid()).collection('events').doc(id).update({status:newStatus});
+    this.toast(`Estado: ${newStatus==='concluido'?'Concluído':'Pendente'}`,'success')}catch(e){this.toast(e.message,'error')}
+};
+
+S._delEvent = async function(id){
+    if(!confirm('Eliminar evento?'))return;
+    try{await db.collection('schools').doc(this.tid()).collection('events').doc(id).delete();this.toast('Eliminado','success')}catch(e){this.toast(e.message,'error')}
+};
+
+// =============================================
+// 3. MENSAGENS PRIVADAS — Só vê suas mensagens
+// =============================================
+S._routes['messages'] = function(){
+    const pc = document.getElementById('pgC'), tid = this.tid();
+    if(!tid) return;
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Mensagens</h2><p class="tm fs-s">Apenas suas mensagens enviadas e recebidas</p></div>
+            <div style="display:flex;gap:5px">
+                <button class="btn btn-r" onclick="S._mdNewMsg()"><span class="material-icons-outlined">edit</span>Nova</button>
+                <button class="btn btn-g btn-s" onclick="S._mdGroupMsg()"><span class="material-icons-outlined">groups</span>Grupo</button>
+            </div>
+        </div>
+        <div class="g2">
+            <div>
+                <div class="cd" style="max-height:65vh;overflow-y:auto" id="msgList">
+                    <div class="fc" style="padding:20px"><div class="ld-spin" style="width:22px;height:22px;border-width:2px"></div></div>
+                </div>
+            </div>
+            <div class="cd">
+                <h3 class="fw7 fs-m mb-m">Utilizadores</h3>
+                <div class="fg"><input type="text" class="fi" placeholder="🔍 Pesquisar..." oninput="S._filterMsgUsers(this.value)"></div>
+                <div id="msgUsers" style="max-height:200px;overflow-y:auto"><p class="tm fs-s">Carregando...</p></div>
+            </div>
+        </div>
+    </div>`;
+
+    this._loadPrivateMessages(tid);
+    this._loadMsgUsersList(tid);
+};
+
+// Carregar APENAS mensagens do utilizador actual
+S._loadPrivateMessages = function(tid){
+    // Ouvir todas mensagens e filtrar no cliente
+    const unsub = db.collection('schools').doc(tid).collection('messages')
+        .orderBy('createdAt','desc').limit(100).onSnapshot(snap => {
+        const el = document.getElementById('msgList');
+        if(!el) return;
+
+        const myUid = this.user?.uid;
+        let h = '';
+        let count = 0;
+
+        snap.forEach(doc => {
+            const m = doc.data();
+            
+            // Filtrar: só mostrar se EU enviei OU foi enviada PARA MIM OU para TODOS
+            const isSender = m.senderId === myUid;
+            const isRecipient = m.recipientId === myUid || m.recipientId === 'all';
+            
+            if(!isSender && !isRecipient) return;
+            
+            count++;
+            const time = m.createdAt ? new Date(m.createdAt.toDate()).toLocaleString('pt-AO',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+            const recipient = m.recipientName ? `→ ${m.recipientName}` : (m.recipientId === 'all' ? '→ Todos' : '');
+
+            h += `<div class="mb-s" style="padding:10px;border-radius:8px;${isSender?'background:rgba(204,27,43,.04);border-left:3px solid #CC1B2B':'background:rgba(37,99,235,.03);border-left:3px solid #2563EB'}">
+                <div class="fb" style="margin-bottom:4px">
+                    <div style="display:flex;align-items:center;gap:5px">
+                        <div style="width:22px;height:22px;border-radius:5px;background:linear-gradient(135deg,${isSender?'#CC1B2B,#D4A017':'#2563EB,#1D4ED8'});display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.42rem">${(m.senderName||'U').substring(0,2).toUpperCase()}</div>
+                        <div>
+                            <span class="fw7 fs-s">${isSender?'Eu':m.senderName||'?'}</span>
+                            <span class="tm fs-s" style="margin-left:4px">${recipient}</span>
+                        </div>
+                    </div>
+                    <span class="fs-s tm">${time}</span>
+                </div>
+                <p style="font-size:.82rem;padding-left:27px;line-height:1.4">${this.san(m.text||'')}</p>
+                ${!isSender?`<div style="padding-left:27px;margin-top:4px"><button class="btn btn-gh btn-s" onclick="S._replyMsg2('${m.senderId}','${this.san(m.senderName||'')}')"><span class="material-icons-outlined" style="font-size:.7rem">reply</span>Responder</button></div>`:''}
+            </div>`;
+        });
+
+        if(count === 0){
+            el.innerHTML = '<div class="tc" style="padding:24px"><span class="material-icons-outlined" style="font-size:2rem;color:#D4A017">forum</span><p class="tm mt-s">Nenhuma mensagem</p></div>';
+        } else {
+            el.innerHTML = h;
+        }
+    });
+    this._ls.push(unsub);
+};
+
+S._loadMsgUsersList = async function(tid){
+    try {
+        const snap = await db.collection('users').where('tenantId','==',tid).get();
+        const el = document.getElementById('msgUsers'); if(!el) return;
+        let h = '';
+        snap.forEach(d => {
+            const u = d.data();
+            if(u.uid === this.user?.uid || !u.active) return;
+            h += `<div class="fb" style="padding:4px 0;border-bottom:1px solid rgba(0,0,0,.04);cursor:pointer" onclick="S._replyMsg2('${d.id}','${this.san(u.name||'')}')">
+                <div style="display:flex;align-items:center;gap:5px"><div style="width:5px;height:5px;border-radius:50%;background:#059669;flex-shrink:0"></div>
+                <span class="fs-s fw7" data-uname="${(u.name||'').toLowerCase()}">${u.name||''}</span></div>
+                <span class="bg bg-in" style="font-size:.52rem">${this.RL[u.role]||u.role}</span>
+            </div>`;
+        });
+        el.innerHTML = h || '<p class="tm fs-s">Nenhum</p>';
+    } catch(e){}
+};
+
+S._filterMsgUsers = function(q){
+    const ql = q.toLowerCase();
+    document.querySelectorAll('#msgUsers > div').forEach(el => {
+        const name = el.querySelector('[data-uname]')?.dataset.uname || '';
+        el.style.display = !q || name.includes(ql) ? '' : 'none';
+    });
+};
+
+S._mdNewMsg = async function(){
+    const tid = this.tid();
+    let opts = '<option value="all">📢 Todos</option>';
+    try{const s=await db.collection('users').where('tenantId','==',tid).get();
+    s.forEach(d=>{const u=d.data();if(u.uid===this.user?.uid)return;opts+=`<option value="${d.id}" data-name="${u.name||''}">${u.name||''} — ${this.RL[u.role]||u.role}</option>`})}catch(e){}
+
+    this.oModal('Nova Mensagem',`<form onsubmit="return false">
+        <div class="fg"><label class="fl">Para *</label><select id="mg_to" class="fs">${opts}</select></div>
+        <div class="fg"><label class="fl">Mensagem *</label><textarea id="mg_tx" class="fi" rows="5" required></textarea></div>
+    </form>`,`<button class="btn btn-o" onclick="S.cModal()">Cancelar</button><button class="btn btn-r" onclick="S._sendMsg2()"><span class="material-icons-outlined">send</span>Enviar</button>`,'460px');
+};
+
+S._replyMsg2 = function(uid, name){
+    this._mdNewMsg();
+    setTimeout(()=>{
+        const sel=document.getElementById('mg_to');
+        if(sel){for(let i=0;i<sel.options.length;i++){if(sel.options[i].value===uid){sel.selectedIndex=i;break}}}
+    },300);
+};
+
+S._mdGroupMsg = function(){
+    const roles = Object.entries(this.RL).filter(([k])=>k!=='super_admin').map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+    this.oModal('Mensagem para Grupo',`<form onsubmit="return false">
+        <div class="fg"><label class="fl">Grupo *</label><select id="mg_grp" class="fs"><option value="all">Todos</option>${roles}</select></div>
+        <div class="fg"><label class="fl">Mensagem *</label><textarea id="mg_gtx" class="fi" rows="5" required></textarea></div>
+    </form>`,`<button class="btn btn-o" onclick="S.cModal()">Cancelar</button><button class="btn btn-r" onclick="S._sendGrpMsg2()"><span class="material-icons-outlined">send</span>Enviar</button>`,'460px');
+};
+
+S._sendMsg2 = async function(){
+    const to=document.getElementById('mg_to');const tx=document.getElementById('mg_tx')?.value.trim();
+    if(!tx) return this.toast('Escreva a mensagem','error');
+    const recipientName=to?.value==='all'?'Todos':(to?.options[to.selectedIndex]?.dataset?.name||'');
+    try{await db.collection('schools').doc(this.tid()).collection('messages').add({text:tx,senderId:this.user.uid,senderName:this.ud?.name||'',senderRole:this.ud?.role||'',recipientId:to?.value||'all',recipientName,read:false,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    this.toast('Enviada!','success');this.cModal()}catch(e){this.toast(e.message,'error')}
+};
+
+S._sendGrpMsg2 = async function(){
+    const grp=document.getElementById('mg_grp')?.value;const tx=document.getElementById('mg_gtx')?.value.trim();
+    if(!tx) return this.toast('Escreva','error');
+    try{await db.collection('schools').doc(this.tid()).collection('messages').add({text:tx,senderId:this.user.uid,senderName:this.ud?.name||'',senderRole:this.ud?.role||'',recipientId:'all',recipientName:grp==='all'?'Todos':(this.RL[grp]||grp),targetRole:grp,read:false,createdAt:firebase.firestore.FieldValue.serverTimestamp()});
+    this.toast('Enviada ao grupo!','success');this.cModal()}catch(e){this.toast(e.message,'error')}
+};
+
+console.log('✅ Fichas PDF: botão ao lado de editar (alunos e funcionários)');
+console.log('✅ Eventos & Actividades: CRUD completo com alertas 48h');
+console.log('✅ Mensagens privadas: cada utilizador só vê suas mensagens');
+</script>
+<!-- ================================================
+     FIM FICHAS + EVENTOS + MENSAGENS
+     ================================================ -->
+<!-- ================================================
+     CORREÇÃO — Botão Ficha PDF Funcionário na Lista
+     ================================================ -->
+<script>
+// =============================================
+// REESCREVER LISTA DE FUNCIONÁRIOS COM BOTÃO FICHA
+// =============================================
+S._routes['staff'] = function(){
+    if(!this.hasRole('diretor','subdiretor_administrativo','super_admin')) return this.pgAccessDenied();
+    const pc = document.getElementById('pgC'), tid = this.tid();
+    if(!tid) return;
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Funcionários</h2><p class="tm fs-s">Gestão de recursos humanos</p></div>
+            <div style="display:flex;gap:5px">
+                <button class="btn btn-o btn-s" onclick="S.expStaffXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+                <button class="btn btn-r" onclick="S.mdStaff()"><span class="material-icons-outlined">person_add</span>Novo</button>
+            </div>
+        </div>
+        <div class="cd p0" style="overflow:hidden">
+            <div style="padding:10px;border-bottom:1px solid #E5E7EB">
+                <input type="text" class="fi" placeholder="🔍 Pesquisar funcionário..." oninput="S.filterTbl('sfTb',this.value)">
+            </div>
+            <div class="ovx"><table class="tbl"><thead><tr>
+                <th>Nº</th><th>Funcionário</th><th>Cargo</th><th>Dept.</th><th>Contacto</th><th>Turno</th><th>Estado</th><th class="tc">Acções</th>
+            </tr></thead>
+            <tbody id="sfTb"><tr><td colspan="8" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div>
+        </div>
+    </div>`;
+
+    const unsub = db.collection('schools').doc(tid).collection('staff').onSnapshot(snap => {
+        const tb = document.getElementById('sfTb');
+        if(!tb) return;
+
+        if(snap.empty){
+            tb.innerHTML = '<tr><td colspan="8" class="tc tm" style="padding:40px">Nenhum funcionário</td></tr>';
+            return;
+        }
+
+        let results = [];
+        snap.forEach(d => results.push({id: d.id, ...d.data()}));
+        results.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+        let h = '';
+        results.forEach((f, idx) => {
+            const gc = f.sex === 'Feminino' ? '#EC4899,#BE185D' : '#3B82F6,#1D4ED8';
+            const ini = (f.name || 'F').substring(0, 2).toUpperCase();
+
+            h += `<tr>
+                <td class="fw7">${idx + 1}</td>
+                <td>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <div style="width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,${gc});display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.65rem;flex-shrink:0;overflow:hidden">
+                            ${f.photo ? `<img src="${f.photo}" style="width:100%;height:100%;object-fit:cover">` : ini}
+                        </div>
+                        <div>
+                            <p class="fw7 fs-s">${f.name || 'N/D'}</p>
+                            <p class="fs-s tm">${f.bi || ''} ${f.mecNumber ? '• Nº ' + f.mecNumber : ''}</p>
+                        </div>
+                    </div>
+                </td>
+                <td class="fw7 fs-s">${f.cargo || 'N/D'}</td>
+                <td class="fs-s">${f.department || '—'}</td>
+                <td class="fs-s">${f.phone || '—'}</td>
+                <td class="fs-s">${f.shift || '—'}</td>
+                <td><span class="bg ${f.active !== false ? 'bg-ok' : 'bg-er'}">${f.active !== false ? 'Activo' : 'Inactivo'}</span></td>
+                <td>
+                    <div style="display:flex;gap:2px;justify-content:center">
+                        <button class="btn btn-gh btn-s" onclick="S.viewStaff('${f.id}')" title="Ver detalhes">
+                            <span class="material-icons-outlined" style="font-size:.8rem">visibility</span>
+                        </button>
+                        <button class="btn btn-gh btn-s" onclick="S.editStaff('${f.id}')" title="Editar">
+                            <span class="material-icons-outlined" style="font-size:.8rem">edit</span>
+                        </button>
+                        <button class="btn btn-gh btn-s" onclick="S._printStaffFicha('${f.id}')" title="Ficha PDF">
+                            <span class="material-icons-outlined" style="font-size:.8rem;color:#D4A017">picture_as_pdf</span>
+                        </button>
+                        <button class="btn btn-gh btn-s" onclick="S.genPasseStaff('${f.id}')" title="Passe PDF">
+                            <span class="material-icons-outlined" style="font-size:.8rem;color:#059669">badge</span>
+                        </button>
+                    </div>
+                </td>
+            </tr>`;
+        });
+
+        tb.innerHTML = h;
+    });
+    this._ls.push(unsub);
+};
+
+console.log('✅ Lista de funcionários com botões: Ver, Editar, Ficha PDF, Passe PDF');
+</script>
+<!-- ================================================
+     FIM CORREÇÃO STAFF
+     ================================================ -->
+<!-- ================================================
+     PASSES FUNCIONÁRIOS — Individual + Lote
+     ================================================ -->
+<script>
+// =============================================
+// REESCREVER LISTA STAFF COM BOTÃO LOTE
+// =============================================
+S._routes['staff'] = function(){
+    if(!this.hasRole('diretor','subdiretor_administrativo','super_admin')) return this.pgAccessDenied();
+    const pc = document.getElementById('pgC'), tid = this.tid();
+    if(!tid) return;
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Funcionários</h2><p class="tm fs-s">Gestão de recursos humanos</p></div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap">
+                <button class="btn btn-o btn-s" onclick="S.expStaffXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+                <button class="btn btn-g btn-s" onclick="S._genAllStaffPasses()"><span class="material-icons-outlined" style="font-size:.85rem">badge</span>Todos Passes</button>
+                <button class="btn btn-r" onclick="S.mdStaff()"><span class="material-icons-outlined">person_add</span>Novo</button>
+            </div>
+        </div>
+        <div class="cd p0" style="overflow:hidden">
+            <div style="padding:10px;border-bottom:1px solid #E5E7EB">
+                <input type="text" class="fi" placeholder="🔍 Pesquisar funcionário..." oninput="S.filterTbl('sfTb',this.value)">
+            </div>
+            <div class="ovx"><table class="tbl"><thead><tr>
+                <th>Nº</th><th>Funcionário</th><th>Cargo</th><th>Dept.</th><th>Contacto</th><th>Turno</th><th>Estado</th><th class="tc">Acções</th>
+            </tr></thead>
+            <tbody id="sfTb"><tr><td colspan="8" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div>
+        </div>
+    </div>`;
+
+    const unsub = db.collection('schools').doc(tid).collection('staff').onSnapshot(snap => {
+        const tb = document.getElementById('sfTb');
+        if(!tb) return;
+        if(snap.empty){ tb.innerHTML = '<tr><td colspan="8" class="tc tm" style="padding:40px">Nenhum funcionário</td></tr>'; return; }
+
+        let results = [];
+        snap.forEach(d => results.push({id:d.id,...d.data()}));
+        results.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+
+        let h = '';
+        results.forEach((f, idx) => {
+            const gc = f.sex==='Feminino'?'#EC4899,#BE185D':'#3B82F6,#1D4ED8';
+            h += `<tr>
+                <td class="fw7">${idx+1}</td>
+                <td><div style="display:flex;align-items:center;gap:8px">
+                    <div style="width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,${gc});display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:.65rem;flex-shrink:0;overflow:hidden">
+                        ${f.photo?`<img src="${f.photo}" style="width:100%;height:100%;object-fit:cover">`:(f.name||'F').substring(0,2).toUpperCase()}
+                    </div>
+                    <div><p class="fw7 fs-s">${f.name||'N/D'}</p><p class="fs-s tm">${f.bi||''} ${f.mecNumber?'• Nº '+f.mecNumber:''}</p></div>
+                </div></td>
+                <td class="fw7 fs-s">${f.cargo||'N/D'}</td>
+                <td class="fs-s">${f.department||'—'}</td>
+                <td class="fs-s">${f.phone||'—'}</td>
+                <td class="fs-s">${f.shift||'—'}</td>
+                <td><span class="bg ${f.active!==false?'bg-ok':'bg-er'}">${f.active!==false?'Activo':'Inactivo'}</span></td>
+                <td><div style="display:flex;gap:2px;justify-content:center">
+                    <button class="btn btn-gh btn-s" onclick="S.viewStaff('${f.id}')" title="Ver"><span class="material-icons-outlined" style="font-size:.8rem">visibility</span></button>
+                    <button class="btn btn-gh btn-s" onclick="S.editStaff('${f.id}')" title="Editar"><span class="material-icons-outlined" style="font-size:.8rem">edit</span></button>
+                    <button class="btn btn-gh btn-s" onclick="S._printStaffFicha('${f.id}')" title="Ficha PDF"><span class="material-icons-outlined" style="font-size:.8rem;color:#D4A017">picture_as_pdf</span></button>
+                    <button class="btn btn-gh btn-s" onclick="S._genSingleStaffPasse('${f.id}')" title="Passe Individual"><span class="material-icons-outlined" style="font-size:.8rem;color:#059669">badge</span></button>
+                </div></td>
+            </tr>`;
+        });
+        tb.innerHTML = h;
+    });
+    this._ls.push(unsub);
+};
+
+// =============================================
+// PASSE INDIVIDUAL (1 funcionário, 8 cópias)
+// =============================================
+S._genSingleStaffPasse = async function(staffId){
+    const tid = this.tid();
+    try {
+        const d = await db.collection('schools').doc(tid).collection('staff').doc(staffId).get();
+        if(!d.exists) return this.toast('Não encontrado','error');
+        const f = d.data();
+        let esc = this.school || {};
+        try{ const sd = await db.collection('schools').doc(tid).get(); if(sd.exists) esc = sd.data(); }catch(e){}
+
+        // Gerar 8 passes do mesmo funcionário
+        await this._genStaffPassesPDF([f], esc);
+        this.toast('Passe individual gerado (8 cópias)!','success');
+    } catch(e){ this.toast('Erro: '+e.message,'error'); }
+};
+
+// =============================================
+// TODOS OS PASSES DOS FUNCIONÁRIOS (em lote)
+// =============================================
+S._genAllStaffPasses = async function(){
+    const tid = this.tid();
+    if(!tid) return this.toast('Escola não definida','error');
+
+    this.toast('Gerando passes de todos funcionários...','info',3000);
+
+    try {
+        const snap = await db.collection('schools').doc(tid).collection('staff').get();
+        if(snap.empty) return this.toast('Nenhum funcionário','warn');
+
+        let staffList = [];
+        snap.forEach(d => {
+            const f = d.data();
+            if(f.active !== false) staffList.push(f);
+        });
+        staffList.sort((a,b) => (a.name||'').localeCompare(b.name||''));
+
+        if(staffList.length === 0) return this.toast('Nenhum funcionário activo','warn');
+
+        let esc = this.school || {};
+        try{ const sd = await db.collection('schools').doc(tid).get(); if(sd.exists) esc = sd.data(); }catch(e){}
+
+        await this._genStaffPassesPDF(staffList, esc);
+        this.toast(`${staffList.length} passes gerados!`,'success');
+    } catch(e){ this.toast('Erro: '+e.message,'error'); }
+};
+
+// =============================================
+// GERADOR DE PASSES FUNCIONÁRIOS (8 por A4)
+// Cada funcionário = 1 passe (sem repetir)
+// =============================================
+S._genStaffPassesPDF = async function(staffList, esc){
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+
+    const pw = 90, ph = 62, mx = 7, my = 8, gx = 8, gy = 5;
+    let idx = 0;
+
+    // Se é 1 só funcionário, preencher 8 cópias
+    const isSingle = staffList.length === 1;
+    const totalCards = isSingle ? 8 : staffList.length;
+
+    for(let c = 0; c < totalCards; c++){
+        const f = isSingle ? staffList[0] : staffList[c];
+        const pos = c % 8;
+
+        // Nova página a cada 8 passes
+        if(pos === 0 && c > 0) doc.addPage();
+
+        const col = pos % 2;
+        const row = Math.floor(pos / 2);
+        const x = mx + col * (pw + gx);
+        const y = my + row * (ph + gy);
+
+        // Borda
+        doc.setDrawColor(180); doc.setLineWidth(0.3);
+        doc.roundedRect(x, y, pw, ph, 2, 2);
+
+        // Linha vermelha topo
+        doc.setFillColor(204, 27, 43);
+        doc.rect(x, y, pw, 2, 'F');
+
+        // Linha dourada
+        doc.setFillColor(212, 160, 23);
+        doc.rect(x, y + 2, pw, 0.8, 'F');
+
+        // Nome escola
+        doc.setFontSize(5.5); doc.setTextColor(30); doc.setFont('helvetica', 'bold');
+        doc.text((esc.name || 'ESCOLA').toUpperCase(), x + pw/2, y + 7, {align: 'center'});
+
+        // Título
+        doc.setFontSize(7); doc.setTextColor(204, 27, 43);
+        doc.text('PASSE FUNCIONAL', x + pw/2, y + 11.5, {align: 'center'});
+
+        // Linha separadora
+        doc.setDrawColor(204, 27, 43); doc.setLineWidth(0.3);
+        doc.line(x + 3, y + 13, x + pw - 3, y + 13);
+
+        // Área da foto
+        doc.setDrawColor(180); doc.setLineWidth(0.2);
+        doc.roundedRect(x + 3, y + 15, 17, 21, 1, 1);
+        if(f.photo){
+            try { doc.addImage(f.photo, 'JPEG', x + 3, y + 15, 17, 21); } catch(e){}
+        } else {
+            doc.setFontSize(5); doc.setTextColor(150);
+            doc.text('FOTO', x + 11.5, y + 27, {align: 'center'});
+        }
+
+        // Dados
+        const dx = x + 23;
+        doc.setFontSize(6.5); doc.setTextColor(30); doc.setFont('helvetica', 'bold');
+        doc.text((f.name || '—').substring(0, 28), dx, y + 18);
+
+        doc.setFontSize(5.5); doc.setFont('helvetica', 'normal'); doc.setTextColor(60);
+
+        doc.setFont('helvetica', 'bold'); doc.text('Cargo:', dx, y + 22);
+        doc.setFont('helvetica', 'normal'); doc.text(f.cargo || '—', dx + 13, y + 22);
+
+        doc.setFont('helvetica', 'bold'); doc.text('Função:', dx, y + 26);
+        doc.setFont('helvetica', 'normal'); doc.text(f.funcao || '—', dx + 14, y + 26);
+
+        doc.setFont('helvetica', 'bold'); doc.text('Dept:', dx, y + 30);
+        doc.setFont('helvetica', 'normal'); doc.text(f.department || '—', dx + 11, y + 30);
+
+        doc.setFont('helvetica', 'bold'); doc.text('Nº Mec:', dx, y + 34);
+        doc.setFont('helvetica', 'normal'); doc.text(f.mecNumber || '—', dx + 14, y + 34);
+
+        // Turno
+        doc.setFontSize(6); doc.setFont('helvetica', 'bold'); doc.setTextColor(204, 27, 43);
+        doc.text(`Turno: ${f.shift || '—'}`, dx, y + 39);
+
+        // Ano
+        doc.setFontSize(4.5); doc.setTextColor(120); doc.setFont('helvetica', 'normal');
+        doc.text(`Ano ${new Date().getFullYear()}`, x + pw/2, y + ph - 3, {align: 'center'});
+
+        // Linha inferior dourada
+        doc.setFillColor(212, 160, 23);
+        doc.rect(x, y + ph - 1.5, pw, 1.5, 'F');
+
+        // QR
+        await this.addQR(doc, `SGE|STAFF|${f.name}|${f.cargo}|${f.mecNumber || ''}`, x + pw - 22, y + 16, 16);
+    }
+
+    // Linhas de corte em todas as páginas
+    const totalPages = doc.getNumberOfPages();
+    for(let p = 1; p <= totalPages; p++){
+        doc.setPage(p);
+        doc.setDrawColor(200); doc.setLineWidth(0.1);
+        doc.setLineDashPattern([2, 2], 0);
+
+        // Linha vertical central
+        doc.line(mx + pw + gx/2, 0, mx + pw + gx/2, 297);
+
+        // Linhas horizontais
+        for(let r = 1; r < 4; r++){
+            doc.line(0, my + r * (ph + gy) - gy/2, 210, my + r * (ph + gy) - gy/2);
+        }
+
+        doc.setLineDashPattern([], 0);
+    }
+
+    // Nome do ficheiro
+    const filename = isSingle
+        ? `Passe_${(staffList[0].name || 'func').replace(/\s+/g, '_')}.pdf`
+        : `Passes_Funcionarios_${staffList.length}.pdf`;
+
+    doc.save(filename);
+    this.log('documents', `Passes funcionários: ${isSingle ? staffList[0].name : staffList.length + ' funcionários'}`);
+};
+
+console.log('✅ Passes funcionários corrigidos:');
+console.log('   - Botão individual: 8 cópias do mesmo funcionário');
+console.log('   - Botão "Todos Passes": 1 passe por funcionário, 8 por folha');
+console.log('   - Fundo branco, linhas de corte, QR Code');
+</script>
+<!-- ================================================
+     FIM PASSES FUNCIONÁRIOS
+     ================================================ -->
+
 </body>
 </html>
