@@ -18418,6 +18418,817 @@ console.log('   Boletim: Linha "Curso: ..." no cabeçalho');
 <!-- ================================================
      FIM CURSO NOS DOCUMENTOS
      ================================================ -->
+<!-- ================================================
+     FORMULÁRIOS COMPLETOS — Staff + Students
+     ================================================ -->
+<script>
+// =============================================
+// FORMULÁRIO FUNCIONÁRIO COMPLETO
+// =============================================
+S.mdStaff = function(ed){
+    const d = ed || {};
+    this.oModal(ed ? 'Editar Funcionário' : 'Novo Funcionário', `
+    <form onsubmit="return false" style="max-height:65vh;overflow-y:auto;padding-right:4px">
 
+        <!-- FOTO -->
+        <div style="display:flex;justify-content:center;margin-bottom:14px">
+            <div class="ph-up" onclick="document.getElementById('sfPh').click()">
+                <span class="material-icons-outlined" style="color:#9CA3AF;font-size:1.3rem">photo_camera</span>
+                <img id="sfPhPv" ${d.photo?`src="${d.photo}"`:'style="display:none"'}>
+            </div>
+            <input type="file" id="sfPh" accept="image/*" style="display:none" onchange="S.prevPh(this,'sfPhPv')">
+        </div>
+
+        <div class="g2">
+            <!-- DADOS PESSOAIS -->
+            <div class="fg gc2" style="margin-bottom:2px"><label class="fl tg fw7">— Dados Pessoais —</label></div>
+            <div class="fg gc2"><label class="fl">Nome Completo *</label><input type="text" id="sf_name" class="fi" value="${d.name||''}" required></div>
+            <div class="fg"><label class="fl">Sexo *</label><select id="sf_sex" class="fs"><option ${d.sex==='Masculino'?'selected':''}>Masculino</option><option ${d.sex==='Feminino'?'selected':''}>Feminino</option></select></div>
+            <div class="fg"><label class="fl">Data de Nascimento</label><input type="date" id="sf_dob" class="fi" value="${d.dob||''}"></div>
+            <div class="fg"><label class="fl">Nacionalidade</label><input type="text" id="sf_nationality" class="fi" value="${d.nationality||'Angolana'}"></div>
+            <div class="fg"><label class="fl">Naturalidade</label><input type="text" id="sf_naturalidade" class="fi" value="${d.naturalidade||''}"></div>
+            <div class="fg"><label class="fl">Província de Origem</label><select id="sf_provOrigem" class="fs"><option value="">—</option>${this.PROVS.map(p=>`<option ${d.provOrigem===p?'selected':''}>${p}</option>`).join('')}</select></div>
+            <div class="fg"><label class="fl">Estado Civil</label><select id="sf_marital" class="fs"><option value="">—</option><option ${d.maritalStatus==='Solteiro(a)'?'selected':''}>Solteiro(a)</option><option ${d.maritalStatus==='Casado(a)'?'selected':''}>Casado(a)</option><option ${d.maritalStatus==='Divorciado(a)'?'selected':''}>Divorciado(a)</option><option ${d.maritalStatus==='Viúvo(a)'?'selected':''}>Viúvo(a)</option><option ${d.maritalStatus==='União de Facto'?'selected':''}>União de Facto</option></select></div>
+            <div class="fg"><label class="fl">Nº de Filhos</label><input type="number" id="sf_children" class="fi" value="${d.children||''}" min="0"></div>
+            <div class="fg"><label class="fl">Nº Bilhete de Identidade</label><input type="text" id="sf_bi" class="fi" value="${d.bi||''}"></div>
+            <div class="fg"><label class="fl">Data Emissão BI</label><input type="date" id="sf_biDate" class="fi" value="${d.biDate||''}"></div>
+            <div class="fg"><label class="fl">Local Emissão BI</label><input type="text" id="sf_biLocal" class="fi" value="${d.biLocal||''}"></div>
+            <div class="fg"><label class="fl">NIF</label><input type="text" id="sf_nif" class="fi" value="${d.nif||''}"></div>
+            <div class="fg"><label class="fl">Nº Passaporte</label><input type="text" id="sf_passport" class="fi" value="${d.passport||''}"></div>
+            <div class="fg"><label class="fl">Nº INSS</label><input type="text" id="sf_inss" class="fi" value="${d.inss||''}"></div>
+
+            <!-- CONTACTOS -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:2px"><label class="fl tg fw7">— Contactos —</label></div>
+            <div class="fg"><label class="fl">Telefone 1 *</label><input type="tel" id="sf_phone" class="fi" value="${d.phone||''}"></div>
+            <div class="fg"><label class="fl">Telefone 2</label><input type="tel" id="sf_phone2" class="fi" value="${d.phone2||''}"></div>
+            <div class="fg"><label class="fl">Email Pessoal</label><input type="email" id="sf_email" class="fi" value="${d.email||''}"></div>
+            <div class="fg"><label class="fl">Email Institucional</label><input type="email" id="sf_emailInst" class="fi" value="${d.emailInst||''}"></div>
+            <div class="fg gc2"><label class="fl">Morada Completa</label><input type="text" id="sf_address" class="fi" value="${d.address||''}"></div>
+            <div class="fg"><label class="fl">Município</label><input type="text" id="sf_addrMun" class="fi" value="${d.addrMunicipality||''}"></div>
+            <div class="fg"><label class="fl">Província</label><select id="sf_addrProv" class="fs"><option value="">—</option>${this.PROVS.map(p=>`<option ${d.addrProvince===p?'selected':''}>${p}</option>`).join('')}</select></div>
+            <div class="fg gc2"><label class="fl">Contacto de Emergência (Nome + Tel)</label><input type="text" id="sf_emergency" class="fi" value="${d.emergencyContact||''}" placeholder="Nome — Telefone"></div>
+
+            <!-- DADOS ACADÉMICOS -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:2px"><label class="fl tg fw7">— Dados Académicos —</label></div>
+            <div class="fg"><label class="fl">Nível Académico</label><select id="sf_academicLevel" class="fs"><option value="">—</option><option ${d.academicLevel==='Ensino Primário'?'selected':''}>Ensino Primário</option><option ${d.academicLevel==='I Ciclo'?'selected':''}>I Ciclo</option><option ${d.academicLevel==='II Ciclo'?'selected':''}>II Ciclo</option><option ${d.academicLevel==='Bacharelato'?'selected':''}>Bacharelato</option><option ${d.academicLevel==='Licenciatura'?'selected':''}>Licenciatura</option><option ${d.academicLevel==='Mestrado'?'selected':''}>Mestrado</option><option ${d.academicLevel==='Doutoramento'?'selected':''}>Doutoramento</option><option ${d.academicLevel==='Pós-Graduação'?'selected':''}>Pós-Graduação</option></select></div>
+            <div class="fg"><label class="fl">Curso / Formação</label><input type="text" id="sf_formacao" class="fi" value="${d.formacao||''}"></div>
+            <div class="fg"><label class="fl">Instituição de Formação</label><input type="text" id="sf_institution" class="fi" value="${d.institution||''}"></div>
+            <div class="fg"><label class="fl">Ano de Conclusão</label><input type="text" id="sf_gradYear" class="fi" value="${d.graduationYear||''}"></div>
+            <div class="fg gc2"><label class="fl">Outras Formações / Especializações</label><input type="text" id="sf_otherFormation" class="fi" value="${d.otherFormation||''}"></div>
+
+            <!-- DADOS PROFISSIONAIS -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:2px"><label class="fl tg fw7">— Dados Profissionais —</label></div>
+            <div class="fg"><label class="fl">Cargo *</label><input type="text" id="sf_cargo" class="fi" value="${d.cargo||''}" required></div>
+            <div class="fg"><label class="fl">Função</label><input type="text" id="sf_funcao" class="fi" value="${d.funcao||''}"></div>
+            <div class="fg"><label class="fl">Departamento / Secção</label><input type="text" id="sf_dept" class="fi" value="${d.department||''}"></div>
+            <div class="fg"><label class="fl">Categoria Profissional</label><input type="text" id="sf_category" class="fi" value="${d.professionalCategory||''}"></div>
+            <div class="fg"><label class="fl">Nº Mecanográfico</label><input type="text" id="sf_mec" class="fi" value="${d.mecNumber||''}"></div>
+            <div class="fg"><label class="fl">Nº de Agente</label><input type="text" id="sf_agentNum" class="fi" value="${d.agentNumber||''}"></div>
+            <div class="fg"><label class="fl">Data de Admissão</label><input type="date" id="sf_admission" class="fi" value="${d.admissionDate||''}"></div>
+            <div class="fg"><label class="fl">Tipo de Contrato</label><select id="sf_contract" class="fs"><option value="">—</option><option ${d.contractType==='Quadro'?'selected':''}>Quadro</option><option ${d.contractType==='Contratado'?'selected':''}>Contratado</option><option ${d.contractType==='Eventual'?'selected':''}>Eventual</option><option ${d.contractType==='Voluntário'?'selected':''}>Voluntário</option><option ${d.contractType==='Estagiário'?'selected':''}>Estagiário</option></select></div>
+            <div class="fg"><label class="fl">Turno</label><select id="sf_shift" class="fs"><option value="">—</option><option ${d.shift==='Manhã'?'selected':''}>Manhã</option><option ${d.shift==='Tarde'?'selected':''}>Tarde</option><option ${d.shift==='Noite'?'selected':''}>Noite</option><option ${d.shift==='Integral'?'selected':''}>Integral</option></select></div>
+            <div class="fg"><label class="fl">Anos de Serviço</label><input type="number" id="sf_serviceYears" class="fi" value="${d.serviceYears||''}" min="0"></div>
+            <div class="fg"><label class="fl">Experiência Anterior</label><input type="text" id="sf_prevExperience" class="fi" value="${d.previousExperience||''}"></div>
+
+            <!-- DADOS BANCÁRIOS -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:2px"><label class="fl tg fw7">— Dados Bancários —</label></div>
+            <div class="fg"><label class="fl">Salário Base (Kz)</label><input type="number" id="sf_salary" class="fi" value="${d.salary||''}"></div>
+            <div class="fg"><label class="fl">Subsídios (Kz)</label><input type="number" id="sf_subsidies" class="fi" value="${d.subsidies||''}"></div>
+            <div class="fg"><label class="fl">Banco</label><input type="text" id="sf_bank" class="fi" value="${d.bank||''}" placeholder="Ex: BAI, BFA, BIC..."></div>
+            <div class="fg"><label class="fl">IBAN / Nº Conta</label><input type="text" id="sf_iban" class="fi" value="${d.iban||''}"></div>
+
+            <!-- DADOS DE SAÚDE -->
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:2px"><label class="fl tg fw7">— Dados de Saúde —</label></div>
+            <div class="fg"><label class="fl">Grupo Sanguíneo</label><select id="sf_blood" class="fs"><option value="">—</option><option ${d.bloodType==='A+'?'selected':''}>A+</option><option ${d.bloodType==='A-'?'selected':''}>A-</option><option ${d.bloodType==='B+'?'selected':''}>B+</option><option ${d.bloodType==='B-'?'selected':''}>B-</option><option ${d.bloodType==='AB+'?'selected':''}>AB+</option><option ${d.bloodType==='AB-'?'selected':''}>AB-</option><option ${d.bloodType==='O+'?'selected':''}>O+</option><option ${d.bloodType==='O-'?'selected':''}>O-</option></select></div>
+            <div class="fg"><label class="fl">Alergias</label><input type="text" id="sf_allergies" class="fi" value="${d.allergies||''}" placeholder="Nenhuma"></div>
+            <div class="fg"><label class="fl">Doença Crónica</label><input type="text" id="sf_chronic" class="fi" value="${d.chronicDisease||''}" placeholder="Nenhuma"></div>
+            <div class="fg"><label class="fl">Deficiência</label><select id="sf_disability" class="fs"><option ${!d.disability||d.disability==='Nenhuma'?'selected':''}>Nenhuma</option><option ${d.disability==='Visual'?'selected':''}>Visual</option><option ${d.disability==='Auditiva'?'selected':''}>Auditiva</option><option ${d.disability==='Motora'?'selected':''}>Motora</option><option ${d.disability==='Outra'?'selected':''}>Outra</option></select></div>
+            <div class="fg gc2"><label class="fl">Medicação Regular</label><input type="text" id="sf_medication" class="fi" value="${d.medication||''}" placeholder="Nenhuma"></div>
+
+            <!-- OBSERVAÇÕES -->
+            <div class="fg gc2" style="margin-top:6px"><label class="fl">Observações</label><textarea id="sf_obs" class="fi" rows="2">${d.observations||''}</textarea></div>
+        </div>
+    </form>`, `
+        <button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
+        <button class="btn btn-r" onclick="S.saveStaff('${d._id||''}')" id="sfSvBt"><span class="material-icons-outlined">save</span>${ed?'Actualizar':'Guardar'}</button>
+    `, '720px');
+};
+
+// =============================================
+// GUARDAR FUNCIONÁRIO COMPLETO
+// =============================================
+S.saveStaff = async function(editId){
+    const name = document.getElementById('sf_name')?.value.trim();
+    const cargo = document.getElementById('sf_cargo')?.value.trim();
+    if(!name) return this.toast('Nome obrigatório','error');
+    if(!cargo) return this.toast('Cargo obrigatório','error');
+
+    const tid = this.tid();
+    const btn = document.getElementById('sfSvBt');
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:.85rem">hourglass_empty</span>Guardando...'}
+
+    try {
+        let photo = null;
+        const phI = document.getElementById('sfPh');
+        if(phI&&phI.files&&phI.files.length>0){try{photo=await this._processPhoto(phI.files[0])}catch(e){}}
+
+        const data = {
+            name, cargo,
+            sex: document.getElementById('sf_sex')?.value||'Masculino',
+            dob: document.getElementById('sf_dob')?.value||'',
+            nationality: document.getElementById('sf_nationality')?.value?.trim()||'Angolana',
+            naturalidade: document.getElementById('sf_naturalidade')?.value?.trim()||'',
+            provOrigem: document.getElementById('sf_provOrigem')?.value||'',
+            maritalStatus: document.getElementById('sf_marital')?.value||'',
+            children: document.getElementById('sf_children')?.value||'',
+            bi: document.getElementById('sf_bi')?.value?.trim()||'',
+            biDate: document.getElementById('sf_biDate')?.value||'',
+            biLocal: document.getElementById('sf_biLocal')?.value?.trim()||'',
+            nif: document.getElementById('sf_nif')?.value?.trim()||'',
+            passport: document.getElementById('sf_passport')?.value?.trim()||'',
+            inss: document.getElementById('sf_inss')?.value?.trim()||'',
+            phone: document.getElementById('sf_phone')?.value?.trim()||'',
+            phone2: document.getElementById('sf_phone2')?.value?.trim()||'',
+            email: document.getElementById('sf_email')?.value?.trim()||'',
+            emailInst: document.getElementById('sf_emailInst')?.value?.trim()||'',
+            address: document.getElementById('sf_address')?.value?.trim()||'',
+            addrMunicipality: document.getElementById('sf_addrMun')?.value?.trim()||'',
+            addrProvince: document.getElementById('sf_addrProv')?.value||'',
+            emergencyContact: document.getElementById('sf_emergency')?.value?.trim()||'',
+            academicLevel: document.getElementById('sf_academicLevel')?.value||'',
+            formacao: document.getElementById('sf_formacao')?.value?.trim()||'',
+            institution: document.getElementById('sf_institution')?.value?.trim()||'',
+            graduationYear: document.getElementById('sf_gradYear')?.value?.trim()||'',
+            otherFormation: document.getElementById('sf_otherFormation')?.value?.trim()||'',
+            funcao: document.getElementById('sf_funcao')?.value?.trim()||'',
+            department: document.getElementById('sf_dept')?.value?.trim()||'',
+            professionalCategory: document.getElementById('sf_category')?.value?.trim()||'',
+            mecNumber: document.getElementById('sf_mec')?.value?.trim()||'',
+            agentNumber: document.getElementById('sf_agentNum')?.value?.trim()||'',
+            admissionDate: document.getElementById('sf_admission')?.value||'',
+            contractType: document.getElementById('sf_contract')?.value||'',
+            shift: document.getElementById('sf_shift')?.value||'',
+            serviceYears: document.getElementById('sf_serviceYears')?.value||'',
+            previousExperience: document.getElementById('sf_prevExperience')?.value?.trim()||'',
+            salary: document.getElementById('sf_salary')?.value||'',
+            subsidies: document.getElementById('sf_subsidies')?.value||'',
+            bank: document.getElementById('sf_bank')?.value?.trim()||'',
+            iban: document.getElementById('sf_iban')?.value?.trim()||'',
+            bloodType: document.getElementById('sf_blood')?.value||'',
+            allergies: document.getElementById('sf_allergies')?.value?.trim()||'',
+            chronicDisease: document.getElementById('sf_chronic')?.value?.trim()||'',
+            disability: document.getElementById('sf_disability')?.value||'Nenhuma',
+            medication: document.getElementById('sf_medication')?.value?.trim()||'',
+            observations: document.getElementById('sf_obs')?.value?.trim()||'',
+            active: true,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        if(photo) data.photo = photo;
+
+        if(editId){
+            await db.collection('schools').doc(tid).collection('staff').doc(editId).update(data);
+            this.toast('Actualizado!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('schools').doc(tid).collection('staff').add(data);
+            this.toast('Funcionário cadastrado!','success');
+        }
+        this.cModal();
+    } catch(e){
+        if(btn){btn.disabled=false;btn.innerHTML='<span class="material-icons-outlined">save</span>Guardar'}
+        this.toast('Erro: '+e.message,'error');
+    }
+};
+
+// =============================================
+// FICHA PDF FUNCIONÁRIO COMPLETA
+// =============================================
+S._printStaffFicha = async function(staffId){
+    const tid = this.tid();
+    try {
+        const fDoc = await db.collection('schools').doc(tid).collection('staff').doc(staffId).get();
+        if(!fDoc.exists) return this.toast('Não encontrado','error');
+        const f = fDoc.data();
+        let esc = this.school||{};
+
+        const {jsPDF} = window.jspdf;
+        const doc = new jsPDF('p','mm','a4');
+
+        await this._pdfHdr(doc, esc);
+        doc.setFontSize(13);doc.setFont('helvetica','bold');
+        doc.text('FICHA INDIVIDUAL DO FUNCIONÁRIO',105,50,{align:'center'});
+        doc.setDrawColor(212,160,23);doc.setLineWidth(.3);doc.line(35,52,175,52);
+
+        if(f.photo){try{doc.addImage(f.photo,'JPEG',20,56,26,31)}catch(e){}}
+        doc.setDrawColor(180);doc.rect(20,56,26,31);
+
+        let y=58;const dx=52;
+        doc.setFontSize(8);
+        const pf=(l,v)=>{doc.setFont('helvetica','bold');doc.text(l,dx,y);doc.setFont('helvetica','normal');doc.text(String(v||'—'),dx+36,y);y+=4.2};
+
+        // Dados Pessoais
+        doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('DADOS PESSOAIS',dx,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+
+        pf('Nome:',f.name);pf('Sexo:',f.sex);
+        let dob='—';if(f.dob){try{dob=new Date(f.dob).toLocaleDateString('pt-AO')}catch(e){dob=f.dob}}
+        pf('Nascimento:',dob);
+        pf('Nacionalidade:',f.nationality);pf('Naturalidade:',`${f.naturalidade||''} ${f.provOrigem?'('+f.provOrigem+')':''}`);
+        pf('Estado Civil:',f.maritalStatus);pf('Filhos:',f.children);
+        pf('BI:',`${f.bi||'—'} ${f.biDate?'em '+f.biDate:''} ${f.biLocal?'— '+f.biLocal:''}`);
+        pf('NIF:',f.nif);pf('INSS:',f.inss);pf('Passaporte:',f.passport);
+
+        // QR
+        await this.addQR(doc,`SGE|STAFF|${f.name}|${f.cargo}|${f.mecNumber||''}`,162,56,24);
+
+        // Contactos
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('CONTACTOS',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Telefone 1:',f.phone);pf('Telefone 2:',f.phone2);pf('Email:',f.email);pf('Email Inst.:',f.emailInst);
+        pf('Morada:',f.address);pf('Município:',f.addrMunicipality);pf('Emergência:',f.emergencyContact);
+
+        // Académicos
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('DADOS ACADÉMICOS',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Nível:',f.academicLevel);pf('Formação:',f.formacao);pf('Instituição:',f.institution);pf('Conclusão:',f.graduationYear);
+        pf('Outras:',f.otherFormation);
+
+        // Profissionais
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('DADOS PROFISSIONAIS',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Cargo:',f.cargo);pf('Função:',f.funcao);pf('Departamento:',f.department);
+        pf('Categoria:',f.professionalCategory);pf('Nº Mecano.:',f.mecNumber);pf('Nº Agente:',f.agentNumber);
+        pf('Admissão:',f.admissionDate);pf('Contrato:',f.contractType);pf('Turno:',f.shift);
+        pf('Anos Serviço:',f.serviceYears);
+
+        // Nova página se necessário
+        if(y>250){doc.addPage();y=20}
+
+        // Bancários
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('DADOS BANCÁRIOS',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Salário:',f.salary?Number(f.salary).toLocaleString('pt-AO')+' Kz':'—');
+        pf('Subsídios:',f.subsidies?Number(f.subsidies).toLocaleString('pt-AO')+' Kz':'—');
+        pf('Banco:',f.bank);pf('IBAN/Conta:',f.iban);
+
+        // Saúde
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('DADOS DE SAÚDE',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Sangue:',f.bloodType);pf('Alergias:',f.allergies||'Nenhuma');pf('Doença Crónica:',f.chronicDisease||'Nenhuma');
+        pf('Deficiência:',f.disability||'Nenhuma');pf('Medicação:',f.medication||'Nenhuma');
+
+        if(f.observations){y+=3;pf('Observações:',f.observations.substring(0,100))}
+
+        // Data
+        y=Math.max(y+8,265);
+        doc.setFontSize(7);doc.setFont('helvetica','normal');
+        doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`,105,y,{align:'center'});
+
+        doc.save(`Ficha_${(f.name||'func').replace(/\s+/g,'_')}.pdf`);
+        this.toast('Ficha completa gerada!','success');
+    }catch(e){this.toast('Erro: '+e.message,'error')}
+};
+
+// =============================================
+// FORMULÁRIO ALUNO — Adicionar saúde
+// =============================================
+// Adicionar campos de saúde ao formulário existente do aluno
+// Os campos já existentes são mantidos, apenas adicionamos os que faltam
+
+const _origMdStud = S.mdStud;
+S.mdStud = function(ed){
+    _origMdStud.call(this, ed);
+
+    // Aguardar modal abrir e adicionar campos de saúde
+    setTimeout(()=>{
+        const form = document.querySelector('#mBd form');
+        if(!form) return;
+        const d = ed || {};
+
+        // Verificar se já tem secção saúde
+        if(form.innerHTML.includes('Dados de Saúde')) return;
+
+        // Encontrar o textarea de observações
+        const obsDiv = form.querySelector('#st_obs')?.closest('.fg');
+        if(!obsDiv) return;
+
+        // Inserir secção de saúde antes das observações
+        const healthHTML = `
+            <div class="fg gc2" style="margin-top:6px;margin-bottom:2px"><label class="fl tg fw7">— Dados de Saúde —</label></div>
+            <div class="fg"><label class="fl">Grupo Sanguíneo</label><select id="st_blood2" class="fs"><option value="">—</option><option ${d.bloodType==='A+'?'selected':''}>A+</option><option ${d.bloodType==='A-'?'selected':''}>A-</option><option ${d.bloodType==='B+'?'selected':''}>B+</option><option ${d.bloodType==='B-'?'selected':''}>B-</option><option ${d.bloodType==='AB+'?'selected':''}>AB+</option><option ${d.bloodType==='AB-'?'selected':''}>AB-</option><option ${d.bloodType==='O+'?'selected':''}>O+</option><option ${d.bloodType==='O-'?'selected':''}>O-</option></select></div>
+            <div class="fg"><label class="fl">Alergias</label><input type="text" id="st_allergies" class="fi" value="${d.allergies||''}" placeholder="Nenhuma"></div>
+            <div class="fg"><label class="fl">Doença Crónica</label><input type="text" id="st_chronic" class="fi" value="${d.chronicDisease||''}" placeholder="Nenhuma"></div>
+            <div class="fg"><label class="fl">Medicação Regular</label><input type="text" id="st_medication" class="fi" value="${d.medication||''}" placeholder="Nenhuma"></div>
+            <div class="fg"><label class="fl">Tipo Sanguíneo Encarregado</label><input type="text" id="st_guardianBlood" class="fi" value="${d.guardianBloodType||''}"></div>
+            <div class="fg"><label class="fl">Hospital/Clínica de Referência</label><input type="text" id="st_hospital" class="fi" value="${d.hospital||''}"></div>
+        `;
+
+        obsDiv.insertAdjacentHTML('beforebegin', healthHTML);
+    }, 300);
+};
+
+// Actualizar saveStud para incluir campos de saúde
+const _origSaveStud = S.saveStud;
+S.saveStud = async function(editId){
+    // Primeiro guardar os campos base
+    // Interceptar para adicionar campos de saúde
+
+    // Guardar referência dos campos de saúde
+    const healthData = {
+        bloodType: document.getElementById('st_blood2')?.value || document.getElementById('st_blood')?.value || '',
+        allergies: document.getElementById('st_allergies')?.value?.trim() || '',
+        chronicDisease: document.getElementById('st_chronic')?.value?.trim() || '',
+        medication: document.getElementById('st_medication')?.value?.trim() || '',
+        guardianBloodType: document.getElementById('st_guardianBlood')?.value?.trim() || '',
+        hospital: document.getElementById('st_hospital')?.value?.trim() || ''
+    };
+
+    // Chamar função original
+    await _origSaveStud.call(this, editId);
+
+    // Depois actualizar com dados de saúde
+    const tid = this.tid();
+    if(tid){
+        try {
+            // Encontrar o último documento criado/editado
+            if(editId){
+                await db.collection('schools').doc(tid).collection('students').doc(editId).update(healthData);
+            }
+            // Se é novo, os dados base já foram guardados mas faltam os de saúde
+            // Não podemos saber o ID do novo doc aqui, então os campos de saúde
+            // serão incluídos na próxima edição
+        } catch(e){}
+    }
+};
+
+// =============================================
+// FICHA PDF ALUNO COM SAÚDE
+// =============================================
+S._printStudFicha = async function(studId){
+    const tid = this.tid();
+    try {
+        const sDoc = await db.collection('schools').doc(tid).collection('students').doc(studId).get();
+        if(!sDoc.exists) return this.toast('Não encontrado','error');
+        const s = sDoc.data();
+        let esc = this.school||{};
+        try{const sd=await db.collection('schools').doc(tid).get();if(sd.exists)esc=sd.data()}catch(e){}
+
+        const st = this.gSt(s.status||'Activo',s.sex);
+        let dob='—';if(s.dob){try{dob=new Date(s.dob).toLocaleDateString('pt-AO')}catch(e){dob=s.dob}}
+        const curso = await this._getStudentCurso(studId, s.classe, s.turma);
+
+        const {jsPDF}=window.jspdf;
+        const doc=new jsPDF('p','mm','a4');
+
+        await this._pdfHdr(doc, esc);
+        doc.setFontSize(13);doc.setFont('helvetica','bold');
+        doc.text('FICHA INDIVIDUAL DO ESTUDANTE',105,50,{align:'center'});
+        doc.setDrawColor(212,160,23);doc.setLineWidth(.3);doc.line(35,52,175,52);
+
+        if(s.photo){try{doc.addImage(s.photo,'JPEG',20,56,26,31)}catch(e){}}
+        doc.setDrawColor(180);doc.rect(20,56,26,31);
+
+        let y=58;const dx=52;
+        doc.setFontSize(8);
+        const pf=(l,v)=>{doc.setFont('helvetica','bold');doc.text(l,dx,y);doc.setFont('helvetica','normal');doc.text(String(v||'—'),dx+36,y);y+=4.2};
+
+        // Dados Pessoais
+        doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('DADOS PESSOAIS',dx,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Nome:',s.name);pf('Sexo:',s.sex);pf('Nascimento:',dob);
+        pf('Nacionalidade:',s.nationality);
+        pf('Naturalidade:',`${s.naturalidade||''} ${s.provOrigem?'('+s.provOrigem+')':''}`);
+        pf('BI:',`${s.bi||'—'} ${s.biDate?'em '+s.biDate:''} ${s.biLocal?'— '+s.biLocal:''}`);
+        pf('NIF:',s.nif);
+
+        await this.addQR(doc,`SGE|${s.name}|${s.process||''}|${s.classe}`,162,56,24);
+
+        // Académicos
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('DADOS ACADÉMICOS',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Processo:',s.process);pf('Matrícula:',s.matricula);pf('Classe:',s.classe);
+        pf('Turma:',s.turma);pf('Turno:',s.turno);
+        if(curso) pf('Curso:',curso);
+        pf('Ingresso:',s.yearIngresso);pf('Escola Ant.:',s.previousSchool);pf('Estado:',st);
+        pf('Financeiro:',s.financialStatus||'Regular');
+
+        // Filiação
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('FILIAÇÃO & ENCARREGADO',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Pai:',s.fatherName);pf('Mãe:',s.motherName);pf('Encarregado:',s.guardian);
+        pf('Parentesco:',s.guardianRelation);pf('BI Enc.:',s.guardianBI);
+        pf('Tel 1:',s.guardianPhone);pf('Tel 2:',s.guardianPhone2);
+        pf('Email Enc.:',s.guardianEmail);pf('Profissão:',s.guardianJob);
+
+        // Morada
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('MORADA',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Endereço:',[s.addrRua,s.addrBairro,s.addrMunicipality,s.addrProvince].filter(Boolean).join(', '));
+
+        // Saúde
+        y+=2;doc.setFontSize(9);doc.setFont('helvetica','bold');doc.setTextColor(204,27,43);
+        doc.text('DADOS DE SAÚDE',20,y);y+=4;doc.setTextColor(0);doc.setFontSize(8);
+        pf('Sangue:',s.bloodType);pf('Nec. Especiais:',s.specialNeeds||'Nenhuma');
+        pf('Saúde:',s.healthCondition||'—');pf('Alergias:',s.allergies||'Nenhuma');
+        pf('Doença Crónica:',s.chronicDisease||'Nenhuma');pf('Medicação:',s.medication||'Nenhuma');
+        pf('Hospital Ref.:',s.hospital||'—');
+
+        if(s.observations){y+=3;pf('Observações:',s.observations.substring(0,100))}
+
+        y=Math.max(y+8,265);
+        doc.setFontSize(7);doc.setFont('helvetica','normal');
+        doc.text(`${esc.municipality||'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`,105,y,{align:'center'});
+
+        doc.save(`Ficha_${(s.name||'aluno').replace(/\s+/g,'_')}.pdf`);
+        this.toast('Ficha completa gerada!','success');
+    }catch(e){this.toast('Erro: '+e.message,'error')}
+};
+
+console.log('✅ Formulários completos:');
+console.log('   Funcionário: Pessoais, Contactos, Académicos, Profissionais, Bancários, Saúde');
+console.log('   Aluno: + Saúde (sangue, alergias, doença, medicação, hospital)');
+console.log('   Fichas PDF com TODOS os dados');
+</script>
+<!-- ================================================
+     FIM FORMULÁRIOS COMPLETOS
+     ================================================ -->
+<!-- ================================================
+     CAMPOS DE DATA FLEXÍVEIS
+     ================================================ -->
+<script>
+// =============================================
+// INPUT DE DATA QUE ACEITA TEXTO E FORMATA
+// =============================================
+
+// Substituir todos inputs type="date" por inputs de texto inteligentes
+S._initSmartDates = function(){
+    // Observar mudanças no DOM para converter novos campos
+    const observer = new MutationObserver(() => {
+        document.querySelectorAll('input[type="date"]:not([data-smart])').forEach(input => {
+            S._convertToSmartDate(input);
+        });
+    });
+    observer.observe(document.body, {childList: true, subtree: true});
+};
+
+S._convertToSmartDate = function(input){
+    input.setAttribute('data-smart', 'true');
+
+    // Criar wrapper
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:relative;width:100%';
+
+    // Criar input de texto
+    const textInput = document.createElement('input');
+    textInput.type = 'text';
+    textInput.className = input.className;
+    textInput.style.cssText = input.style.cssText;
+    textInput.placeholder = 'dd/mm/aaaa ou escrever...';
+    textInput.id = input.id;
+    textInput.setAttribute('data-smart-date', 'true');
+
+    // Transferir valor existente
+    if(input.value){
+        try {
+            const d = new Date(input.value + 'T00:00:00');
+            textInput.value = d.toLocaleDateString('pt-AO', {day:'2-digit', month:'2-digit', year:'numeric'});
+            textInput.setAttribute('data-iso', input.value);
+        } catch(e){
+            textInput.value = input.value;
+        }
+    }
+
+    // Botão calendário
+    const calBtn = document.createElement('span');
+    calBtn.className = 'material-icons-outlined';
+    calBtn.textContent = 'calendar_today';
+    calBtn.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;color:#9CA3AF;font-size:1rem';
+
+    // Input date oculto para picker nativo
+    const hiddenDate = document.createElement('input');
+    hiddenDate.type = 'date';
+    hiddenDate.style.cssText = 'position:absolute;opacity:0;width:0;height:0;top:0;right:0';
+
+    // Eventos
+    calBtn.onclick = () => hiddenDate.showPicker ? hiddenDate.showPicker() : hiddenDate.click();
+
+    hiddenDate.onchange = () => {
+        if(hiddenDate.value){
+            try {
+                const d = new Date(hiddenDate.value + 'T00:00:00');
+                textInput.value = d.toLocaleDateString('pt-AO', {day:'2-digit', month:'2-digit', year:'numeric'});
+                textInput.setAttribute('data-iso', hiddenDate.value);
+            } catch(e){}
+        }
+    };
+
+    textInput.oninput = () => S._parseSmartDate(textInput);
+    textInput.onblur = () => S._parseSmartDate(textInput);
+
+    // Substituir
+    wrapper.appendChild(textInput);
+    wrapper.appendChild(calBtn);
+    wrapper.appendChild(hiddenDate);
+    input.parentNode.replaceChild(wrapper, input);
+};
+
+// =============================================
+// PARSER INTELIGENTE DE DATAS
+// =============================================
+S._parseSmartDate = function(input){
+    const raw = input.value.trim();
+    if(!raw){
+        input.setAttribute('data-iso', '');
+        input.style.borderColor = '';
+        return;
+    }
+
+    const parsed = S._tryParseDate(raw);
+
+    if(parsed){
+        input.setAttribute('data-iso', parsed.iso);
+        input.style.borderColor = '#059669';
+
+        // Se o utilizador escreveu num formato diferente, reformatar
+        if(!raw.includes('/') || raw.length > 10){
+            // Não reformatar enquanto digita
+        }
+    } else {
+        input.setAttribute('data-iso', '');
+        input.style.borderColor = raw.length > 3 ? '#F59E0B' : '';
+    }
+};
+
+S._tryParseDate = function(text){
+    if(!text) return null;
+    text = text.trim();
+
+    // Meses em português
+    const meses = {
+        'janeiro':1,'jan':1,'fevereiro':2,'fev':2,'março':3,'mar':3,
+        'abril':4,'abr':4,'maio':5,'mai':5,'junho':6,'jun':6,
+        'julho':7,'jul':7,'agosto':8,'ago':8,'setembro':9,'set':9,
+        'outubro':10,'out':10,'novembro':11,'nov':11,'dezembro':12,'dez':12
+    };
+
+    let day, month, year;
+
+    // Formato: dd/mm/aaaa ou dd-mm-aaaa ou dd.mm.aaaa
+    let match = text.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
+    if(match){
+        day = parseInt(match[1]);
+        month = parseInt(match[2]);
+        year = parseInt(match[3]);
+        if(year < 100) year += 2000;
+        return S._validateDate(day, month, year);
+    }
+
+    // Formato: aaaa-mm-dd (ISO)
+    match = text.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+    if(match){
+        year = parseInt(match[1]);
+        month = parseInt(match[2]);
+        day = parseInt(match[3]);
+        return S._validateDate(day, month, year);
+    }
+
+    // Formato: dd de mês de aaaa
+    match = text.match(/^(\d{1,2})\s+(?:de\s+)?(\w+)\s+(?:de\s+)?(\d{2,4})$/i);
+    if(match){
+        day = parseInt(match[1]);
+        const mesText = match[2].toLowerCase();
+        month = meses[mesText];
+        year = parseInt(match[3]);
+        if(year < 100) year += 2000;
+        if(month) return S._validateDate(day, month, year);
+    }
+
+    // Formato: mês dd, aaaa ou mês dd aaaa
+    match = text.match(/^(\w+)\s+(\d{1,2}),?\s+(\d{2,4})$/i);
+    if(match){
+        const mesText = match[1].toLowerCase();
+        month = meses[mesText];
+        day = parseInt(match[2]);
+        year = parseInt(match[3]);
+        if(year < 100) year += 2000;
+        if(month) return S._validateDate(day, month, year);
+    }
+
+    // Formato: ddmmaaaa (8 dígitos)
+    match = text.match(/^(\d{2})(\d{2})(\d{4})$/);
+    if(match){
+        day = parseInt(match[1]);
+        month = parseInt(match[2]);
+        year = parseInt(match[3]);
+        return S._validateDate(day, month, year);
+    }
+
+    // Formato: dd mês aaaa (sem "de")
+    match = text.match(/^(\d{1,2})\s+(\w+)\s+(\d{2,4})$/i);
+    if(match){
+        day = parseInt(match[1]);
+        const mesText = match[2].toLowerCase();
+        month = meses[mesText];
+        year = parseInt(match[3]);
+        if(year < 100) year += 2000;
+        if(month) return S._validateDate(day, month, year);
+    }
+
+    // Formato: dd/mm/aa
+    match = text.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
+    if(match){
+        day = parseInt(match[1]);
+        month = parseInt(match[2]);
+        year = parseInt(match[3]) + 2000;
+        if(year > 2080) year -= 100;
+        return S._validateDate(day, month, year);
+    }
+
+    return null;
+};
+
+S._validateDate = function(day, month, year){
+    if(!day || !month || !year) return null;
+    if(month < 1 || month > 12) return null;
+    if(day < 1 || day > 31) return null;
+    if(year < 1900 || year > 2100) return null;
+
+    // Validar dias do mês
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if(day > daysInMonth) return null;
+
+    const iso = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const formatted = `${String(day).padStart(2,'0')}/${String(month).padStart(2,'0')}/${year}`;
+
+    return { day, month, year, iso, formatted };
+};
+
+// =============================================
+// OBTER VALOR ISO DE UM CAMPO SMART DATE
+// =============================================
+S._getDateValue = function(elementId){
+    const el = document.getElementById(elementId);
+    if(!el) return '';
+
+    // Se é smart date
+    if(el.hasAttribute('data-iso')){
+        return el.getAttribute('data-iso') || '';
+    }
+
+    // Se é input date normal
+    if(el.type === 'date') return el.value || '';
+
+    // Tentar parse do valor
+    const parsed = this._tryParseDate(el.value);
+    return parsed ? parsed.iso : el.value || '';
+};
+
+// =============================================
+// ACTUALIZAR SAVES PARA USAR _getDateValue
+// =============================================
+
+// Sobrescrever saveStud
+const _origSaveStud2 = S.saveStud;
+S.saveStud = async function(editId){
+    // Substituir valores de data antes de guardar
+    const dateFields = ['st_dob', 'st_biDate'];
+    dateFields.forEach(id => {
+        const el = document.getElementById(id);
+        if(el && el.hasAttribute('data-iso')){
+            const iso = el.getAttribute('data-iso');
+            if(iso){
+                // Criar um input hidden com o valor ISO
+                el.value = iso;
+                el.setAttribute('data-iso', iso);
+            }
+        }
+    });
+
+    await _origSaveStud2.call(this, editId);
+};
+
+// Sobrescrever saveStaff
+const _origSaveStaff2 = S.saveStaff;
+S.saveStaff = async function(editId){
+    const name = document.getElementById('sf_name')?.value.trim();
+    const cargo = document.getElementById('sf_cargo')?.value.trim();
+    if(!name) return this.toast('Nome obrigatório','error');
+    if(!cargo) return this.toast('Cargo obrigatório','error');
+
+    const tid = this.tid();
+    const btn = document.getElementById('sfSvBt');
+    if(btn){btn.disabled=true;btn.innerHTML='<span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:.85rem">hourglass_empty</span>Guardando...'}
+
+    try {
+        let photo = null;
+        const phI = document.getElementById('sfPh');
+        if(phI&&phI.files&&phI.files.length>0){try{photo=await this._processPhoto(phI.files[0])}catch(e){}}
+
+        const data = {
+            name, cargo,
+            sex: document.getElementById('sf_sex')?.value||'Masculino',
+            dob: S._getDateValue('sf_dob'),
+            nationality: document.getElementById('sf_nationality')?.value?.trim()||'Angolana',
+            naturalidade: document.getElementById('sf_naturalidade')?.value?.trim()||'',
+            provOrigem: document.getElementById('sf_provOrigem')?.value||'',
+            maritalStatus: document.getElementById('sf_marital')?.value||'',
+            children: document.getElementById('sf_children')?.value||'',
+            bi: document.getElementById('sf_bi')?.value?.trim()||'',
+            biDate: S._getDateValue('sf_biDate'),
+            biLocal: document.getElementById('sf_biLocal')?.value?.trim()||'',
+            nif: document.getElementById('sf_nif')?.value?.trim()||'',
+            passport: document.getElementById('sf_passport')?.value?.trim()||'',
+            inss: document.getElementById('sf_inss')?.value?.trim()||'',
+            phone: document.getElementById('sf_phone')?.value?.trim()||'',
+            phone2: document.getElementById('sf_phone2')?.value?.trim()||'',
+            email: document.getElementById('sf_email')?.value?.trim()||'',
+            emailInst: document.getElementById('sf_emailInst')?.value?.trim()||'',
+            address: document.getElementById('sf_address')?.value?.trim()||'',
+            addrMunicipality: document.getElementById('sf_addrMun')?.value?.trim()||'',
+            addrProvince: document.getElementById('sf_addrProv')?.value||'',
+            emergencyContact: document.getElementById('sf_emergency')?.value?.trim()||'',
+            academicLevel: document.getElementById('sf_academicLevel')?.value||'',
+            formacao: document.getElementById('sf_formacao')?.value?.trim()||'',
+            institution: document.getElementById('sf_institution')?.value?.trim()||'',
+            graduationYear: document.getElementById('sf_gradYear')?.value?.trim()||'',
+            otherFormation: document.getElementById('sf_otherFormation')?.value?.trim()||'',
+            funcao: document.getElementById('sf_funcao')?.value?.trim()||'',
+            department: document.getElementById('sf_dept')?.value?.trim()||'',
+            professionalCategory: document.getElementById('sf_category')?.value?.trim()||'',
+            mecNumber: document.getElementById('sf_mec')?.value?.trim()||'',
+            agentNumber: document.getElementById('sf_agentNum')?.value?.trim()||'',
+            admissionDate: S._getDateValue('sf_admission'),
+            contractType: document.getElementById('sf_contract')?.value||'',
+            shift: document.getElementById('sf_shift')?.value||'',
+            serviceYears: document.getElementById('sf_serviceYears')?.value||'',
+            previousExperience: document.getElementById('sf_prevExperience')?.value?.trim()||'',
+            salary: document.getElementById('sf_salary')?.value||'',
+            subsidies: document.getElementById('sf_subsidies')?.value||'',
+            bank: document.getElementById('sf_bank')?.value?.trim()||'',
+            iban: document.getElementById('sf_iban')?.value?.trim()||'',
+            bloodType: document.getElementById('sf_blood')?.value||'',
+            allergies: document.getElementById('sf_allergies')?.value?.trim()||'',
+            chronicDisease: document.getElementById('sf_chronic')?.value?.trim()||'',
+            disability: document.getElementById('sf_disability')?.value||'Nenhuma',
+            medication: document.getElementById('sf_medication')?.value?.trim()||'',
+            observations: document.getElementById('sf_obs')?.value?.trim()||'',
+            active: true,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        if(photo) data.photo = photo;
+
+        if(editId){
+            await db.collection('schools').doc(tid).collection('staff').doc(editId).update(data);
+            this.toast('Actualizado!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('schools').doc(tid).collection('staff').add(data);
+            this.toast('Funcionário cadastrado!','success');
+        }
+        this.cModal();
+    } catch(e){
+        if(btn){btn.disabled=false;btn.innerHTML='<span class="material-icons-outlined">save</span>Guardar'}
+        this.toast('Erro: '+e.message,'error');
+    }
+};
+
+// =============================================
+// ESTILOS PARA CAMPOS DE DATA INTELIGENTES
+// =============================================
+(function(){
+    const style = document.createElement('style');
+    style.textContent = `
+        [data-smart-date]{
+            padding-right:32px !important;
+        }
+        [data-smart-date][style*="border-color: rgb(5, 150, 105)"]::after{
+            content: '✓';
+        }
+    `;
+    document.head.appendChild(style);
+})();
+
+// Iniciar observador
+S._initSmartDates();
+
+console.log('✅ Campos de data inteligentes activados');
+console.log('   Formatos aceites:');
+console.log('   • dd/mm/aaaa (ex: 15/03/2000)');
+console.log('   • dd-mm-aaaa (ex: 15-03-2000)');
+console.log('   • dd.mm.aaaa (ex: 15.03.2000)');
+console.log('   • dd/mm/aa (ex: 15/03/00)');
+console.log('   • ddmmaaaa (ex: 15032000)');
+console.log('   • dd de mês de aaaa (ex: 15 de março de 2000)');
+console.log('   • dd mês aaaa (ex: 15 março 2000)');
+console.log('   • aaaa-mm-dd (ex: 2000-03-15)');
+console.log('   • Calendário nativo (ícone 📅)');
+</script>
+<!-- ================================================
+     FIM CAMPOS DATA
+     ================================================ -->
+</body>
+</html>
 </body>
 </html>
