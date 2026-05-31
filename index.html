@@ -17431,6 +17431,993 @@ console.log('   - Fundo branco, linhas de corte, QR Code');
 <!-- ================================================
      FIM PASSES FUNCIONÁRIOS
      ================================================ -->
+<!-- ================================================
+     CLASSES POR NÍVEL + CURSOS II CICLO
+     ================================================ -->
+<script>
+// =============================================
+// 1. CURSOS DO II CICLO EM ANGOLA
+// =============================================
+S.CURSOS_II_CICLO = [
+    'Ciências Físicas e Biológicas',
+    'Ciências Humanas',
+    'Ciências Económicas e Jurídicas',
+    'Matemática e Física',
+    'Artes Visuais',
+    'Informática',
+    'Administração e Gestão',
+    'Contabilidade e Gestão',
+    'Construção Civil',
+    'Electrónica',
+    'Electricidade',
+    'Mecânica',
+    'Informática (Técnico)',
+    'Enfermagem',
+    'Análises Clínicas',
+    'Pedagogia',
+    'Hotelaria e Turismo',
+    'Agricultura',
+    'Pecuária',
+    'Telecomunicações',
+    'Geologia e Minas'
+];
+
+// =============================================
+// 2. REESCREVER CLASSES & TURMAS COM CURSOS
+// =============================================
+S._routes['classes'] = function(){
+    if(!this.hasRole('diretor','subdiretor_pedagogico','super_admin')) return this.pgAccessDenied();
+    const pc = document.getElementById('pgC'), tid = this.tid();
+
+    // Classes disponíveis conforme tipo da escola
+    const avClasses = this.school ? this.clsFor(this.school.type) : this.allCls();
+    const schoolType = this.school?.type || '';
+    const hasIICiclo = schoolType.includes('II Ciclo') || avClasses.some(c => {
+        const n = parseInt(c); return n >= 10 && n <= 13;
+    });
+
+    pc.innerHTML = `<div class="fade">
+        <div class="fb fw gm mb-l">
+            <div><h2 class="fw8 fs-l">Classes & Turmas</h2><p class="tm fs-s">Gerir turmas, turnos, salas ${hasIICiclo ? 'e cursos' : ''}</p></div>
+            <div style="display:flex;gap:5px">
+                <button class="btn btn-o btn-s" onclick="S.expTurmasXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>
+                ${hasIICiclo ? `<button class="btn btn-g btn-s" onclick="S._mdCursoCustom()"><span class="material-icons-outlined" style="font-size:.85rem">add</span>Novo Curso</button>` : ''}
+                <button class="btn btn-r" onclick="S._mdTurmaNew()"><span class="material-icons-outlined">add</span>Nova Turma</button>
+            </div>
+        </div>
+
+        <!-- Classes disponíveis -->
+        <div class="cd mb-m">
+            <h3 class="fw7 fs-m mb-s"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:4px;color:#D4A017;font-size:1rem">school</span>Classes Disponíveis (${schoolType || 'Todas'})</h3>
+            <div style="display:flex;flex-wrap:wrap;gap:5px">
+                ${avClasses.map(c => `<span class="bg bg-in" style="font-size:.7rem;padding:4px 10px;cursor:pointer" onclick="S._fTmCl2('${c}')">${c}</span>`).join('')}
+                <span class="bg bg-wr" style="font-size:.7rem;padding:4px 10px;cursor:pointer" onclick="S._fTmCl2('')">Todas</span>
+            </div>
+        </div>
+
+        ${hasIICiclo ? `
+        <!-- Cursos do II Ciclo -->
+        <div class="cd mb-m">
+            <h3 class="fw7 fs-m mb-s"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:4px;color:#CC1B2B;font-size:1rem">menu_book</span>Cursos / Áreas do II Ciclo</h3>
+            <div id="cursosDisplay" style="display:flex;flex-wrap:wrap;gap:4px">
+                ${this.CURSOS_II_CICLO.map(c => `<span class="bg bg-in" style="font-size:.62rem;padding:3px 8px">${c}</span>`).join('')}
+            </div>
+            <div id="cursosCustom" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px"></div>
+        </div>
+        ` : ''}
+
+        <!-- Tabela -->
+        <div class="cd p0" style="overflow:hidden">
+            <div style="padding:10px;border-bottom:1px solid #E5E7EB;display:flex;gap:6px;flex-wrap:wrap">
+                <div style="flex:1;min-width:130px;position:relative">
+                    <span class="material-icons-outlined" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:#9CA3AF;font-size:.95rem">search</span>
+                    <input type="text" class="fi" placeholder="Pesquisar..." oninput="S.filterTbl('tmTb2',this.value)" style="padding-left:30px">
+                </div>
+                <select class="fs" style="width:auto;min-width:90px" onchange="S._fTmTn2(this.value)">
+                    <option value="">Todos Turnos</option><option>Manhã</option><option>Tarde</option><option>Noite</option>
+                </select>
+                ${hasIICiclo ? `<select class="fs" style="width:auto;min-width:100px" onchange="S._fTmCurso(this.value)" id="cursoFilter">
+                    <option value="">Todos Cursos</option>
+                    ${this.CURSOS_II_CICLO.map(c => `<option value="${c}">${c.substring(0,20)}</option>`).join('')}
+                </select>` : ''}
+            </div>
+            <div class="ovx"><table class="tbl"><thead><tr>
+                <th>Classe</th>${hasIICiclo ? '<th>Curso/Área</th>' : ''}<th>Turma</th><th>Turno</th><th>Sala</th><th>Capacidade</th><th>Alunos</th><th>Estado</th><th class="tc">Acções</th>
+            </tr></thead>
+            <tbody id="tmTb2"><tr><td colspan="${hasIICiclo?9:8}" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div>
+        </div>
+    </div>`;
+
+    if(!tid) return;
+    this._loadTurmas2(tid, hasIICiclo);
+    if(hasIICiclo) this._loadCustomCursos(tid);
+};
+
+S._loadTurmas2 = function(tid, hasIICiclo){
+    const unsub = db.collection('schools').doc(tid).collection('turmas').onSnapshot(async snap => {
+        const tb = document.getElementById('tmTb2');
+        if(!tb) return;
+        if(snap.empty){ tb.innerHTML = `<tr><td colspan="${hasIICiclo?9:8}" class="tc tm" style="padding:40px">Nenhuma turma</td></tr>`; return; }
+
+        let results = [];
+        snap.forEach(d => results.push({id:d.id,...d.data()}));
+        results.sort((a,b) => (a.classe||'').localeCompare(b.classe||'') || (a.turma||'').localeCompare(b.turma||''));
+
+        let h = '';
+        for(const t of results){
+            let sc = 0;
+            try { const studs = await this._getStudentsByClassTurma(tid, t.classe, t.turma); sc = studs.length; } catch(e){}
+            const cap = t.capacidade || 45;
+            const pct = Math.min(Math.round(sc/cap*100), 100);
+            const bc = pct > 90 ? '#DC2626' : pct > 70 ? '#F59E0B' : '#059669';
+
+            h += `<tr data-cl="${t.classe||''}" data-tn="${t.turno||''}" data-curso="${t.curso||''}">
+                <td class="fw7">${t.classe||'N/D'}</td>
+                ${hasIICiclo ? `<td class="fs-s"><span class="bg bg-in" style="font-size:.58rem">${t.curso||'—'}</span></td>` : ''}
+                <td><span class="bg bg-in" style="font-size:.72rem;padding:3px 10px">${t.turma||'N/D'}</span></td>
+                <td class="fs-s">${t.turno||'N/D'}</td>
+                <td class="fs-s">${t.sala||'—'}</td>
+                <td class="fs-s">${cap}</td>
+                <td><div style="display:flex;align-items:center;gap:5px"><span class="fw7">${sc}</span>
+                    <div style="flex:1;max-width:60px;height:4px;background:#E5E7EB;border-radius:2px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${bc};border-radius:2px"></div></div>
+                </div></td>
+                <td><span class="bg ${t.active!==false?'bg-ok':'bg-er'}">${t.active!==false?'Activa':'Inactiva'}</span></td>
+                <td><div style="display:flex;gap:2px;justify-content:center">
+                    <button class="btn btn-gh btn-s" onclick="S._editTurma2('${t.id}')" title="Editar"><span class="material-icons-outlined" style="font-size:.8rem">edit</span></button>
+                    <button class="btn btn-gh btn-s" onclick="S._delTurma2('${t.id}')" title="Eliminar"><span class="material-icons-outlined" style="font-size:.8rem;color:#DC2626">delete</span></button>
+                </div></td>
+            </tr>`;
+        }
+        tb.innerHTML = h;
+    });
+    this._ls.push(unsub);
+};
+
+S._fTmCl2 = function(c){ document.querySelectorAll('#tmTb2 tr').forEach(r => { r.style.display = !c || r.dataset.cl === c ? '' : 'none'; }); };
+S._fTmTn2 = function(t){ document.querySelectorAll('#tmTb2 tr').forEach(r => { r.style.display = !t || r.dataset.tn === t ? '' : 'none'; }); };
+S._fTmCurso = function(c){ document.querySelectorAll('#tmTb2 tr').forEach(r => { r.style.display = !c || r.dataset.curso === c ? '' : 'none'; }); };
+
+// =============================================
+// MODAL NOVA TURMA COM CURSO
+// =============================================
+S._mdTurmaNew = function(edit){
+    const d = edit || {};
+    const avClasses = this.school ? this.clsFor(this.school.type) : this.allCls();
+    const schoolType = this.school?.type || '';
+    const hasIICiclo = schoolType.includes('II Ciclo') || avClasses.some(c => { const n = parseInt(c); return n >= 10; });
+
+    // Construir opções de curso
+    let cursosOpts = '<option value="">— Sem curso —</option>';
+    this.CURSOS_II_CICLO.forEach(c => {
+        cursosOpts += `<option value="${c}" ${d.curso===c?'selected':''}>${c}</option>`;
+    });
+    // Cursos personalizados
+    if(this._customCursos){
+        this._customCursos.forEach(c => {
+            if(!this.CURSOS_II_CICLO.includes(c)){
+                cursosOpts += `<option value="${c}" ${d.curso===c?'selected':''}>${c} (personalizado)</option>`;
+            }
+        });
+    }
+    cursosOpts += '<option value="__custom__">+ Introduzir outro curso...</option>';
+
+    this.oModal(edit ? 'Editar Turma' : 'Nova Turma', `
+        <form onsubmit="return false">
+            <div class="g2">
+                <div class="fg">
+                    <label class="fl">Classe *</label>
+                    <select id="nt_cl" class="fs" required onchange="S._ntCheckCurso()">
+                        <option value="">Seleccionar...</option>
+                        ${avClasses.map(c => `<option value="${c}" ${d.classe===c?'selected':''}>${c}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="fg">
+                    <label class="fl">Turma * (letra)</label>
+                    <input type="text" id="nt_tm" class="fi" value="${d.turma||''}" placeholder="A, B, C..." maxlength="5" style="text-transform:uppercase" required>
+                </div>
+                <div class="fg">
+                    <label class="fl">Turno *</label>
+                    <select id="nt_tn" class="fs" required>
+                        <option value="">Seleccionar...</option>
+                        <option ${d.turno==='Manhã'?'selected':''}>Manhã</option>
+                        <option ${d.turno==='Tarde'?'selected':''}>Tarde</option>
+                        <option ${d.turno==='Noite'?'selected':''}>Noite</option>
+                    </select>
+                </div>
+                <div class="fg">
+                    <label class="fl">Sala</label>
+                    <input type="text" id="nt_sl" class="fi" value="${d.sala||''}" placeholder="Sala 1, Lab...">
+                </div>
+
+                <!-- Curso (só para II Ciclo) -->
+                <div class="fg gc2" id="ntCursoDiv" style="${hasIICiclo?'':'display:none'}">
+                    <label class="fl">Curso / Área de Formação</label>
+                    <select id="nt_curso" class="fs" onchange="S._ntCursoChange()">
+                        ${cursosOpts}
+                    </select>
+                </div>
+                <div class="fg gc2" id="ntCursoCustomDiv" style="display:none">
+                    <label class="fl">Nome do Curso Personalizado</label>
+                    <input type="text" id="nt_cursoCustom" class="fi" placeholder="Introduza o nome do curso...">
+                </div>
+
+                <div class="fg">
+                    <label class="fl">Capacidade</label>
+                    <input type="number" id="nt_cp" class="fi" value="${d.capacidade||45}" min="1" max="200">
+                </div>
+                <div class="fg">
+                    <label class="fl">Estado</label>
+                    <select id="nt_ac" class="fs">
+                        <option value="true" ${d.active!==false?'selected':''}>Activa</option>
+                        <option value="false" ${d.active===false?'selected':''}>Inactiva</option>
+                    </select>
+                </div>
+            </div>
+        </form>
+    `, `
+        <button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
+        <button class="btn btn-r" onclick="S._saveTurma2('${d._id||''}')">${edit?'Actualizar':'Criar Turma'}</button>
+    `, '540px');
+
+    // Verificar se deve mostrar campo de curso
+    this._ntCheckCurso();
+};
+
+// Mostrar/esconder campo de curso baseado na classe
+S._ntCheckCurso = function(){
+    const cl = document.getElementById('nt_cl')?.value;
+    const cursoDiv = document.getElementById('ntCursoDiv');
+    if(!cursoDiv) return;
+
+    const n = parseInt(cl);
+    const isIICiclo = n >= 10 && n <= 13;
+
+    cursoDiv.style.display = isIICiclo ? '' : 'none';
+    if(!isIICiclo){
+        const cursoSel = document.getElementById('nt_curso');
+        if(cursoSel) cursoSel.value = '';
+    }
+};
+
+// Mostrar campo custom quando selecciona "Introduzir outro"
+S._ntCursoChange = function(){
+    const sel = document.getElementById('nt_curso');
+    const customDiv = document.getElementById('ntCursoCustomDiv');
+    if(!sel || !customDiv) return;
+
+    customDiv.style.display = sel.value === '__custom__' ? '' : 'none';
+};
+
+// Guardar turma
+S._saveTurma2 = async function(editId){
+    const cl = document.getElementById('nt_cl')?.value;
+    const tm = (document.getElementById('nt_tm')?.value || '').trim().toUpperCase();
+    const tn = document.getElementById('nt_tn')?.value;
+
+    if(!cl) return this.toast('Seleccione a classe','error');
+    if(!tm) return this.toast('Introduza a turma','error');
+    if(!tn) return this.toast('Seleccione o turno','error');
+
+    // Curso
+    let curso = document.getElementById('nt_curso')?.value || '';
+    if(curso === '__custom__'){
+        curso = document.getElementById('nt_cursoCustom')?.value?.trim() || '';
+        if(!curso) return this.toast('Introduza o nome do curso','error');
+
+        // Guardar curso personalizado
+        await this._saveCustomCurso(curso);
+    }
+
+    const tid = this.tid();
+    const data = {
+        classe: cl,
+        turma: tm,
+        turno: tn,
+        sala: document.getElementById('nt_sl')?.value?.trim() || '',
+        curso: curso,
+        capacidade: parseInt(document.getElementById('nt_cp')?.value) || 45,
+        active: document.getElementById('nt_ac')?.value === 'true',
+        code: `${cl}-${tm}-${tn.substring(0,1)}${curso ? '-'+curso.substring(0,3).toUpperCase() : ''}`,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    try {
+        if(!editId){
+            // Verificar duplicidade
+            const studs = await db.collection('schools').doc(tid).collection('turmas')
+                .where('classe','==',cl).get();
+            let dup = false;
+            studs.forEach(d => {
+                if(d.data().turma === tm && d.data().turno === tn) dup = true;
+            });
+            if(dup) return this.toast('Turma já existe!','warn');
+        }
+
+        if(editId){
+            await db.collection('schools').doc(tid).collection('turmas').doc(editId).update(data);
+            this.toast('Turma actualizada!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('schools').doc(tid).collection('turmas').add(data);
+            this.toast('Turma criada!','success');
+        }
+        this.cModal();
+    } catch(e){ this.toast(e.message,'error'); }
+};
+
+S._editTurma2 = async function(id){
+    try {
+        const d = await db.collection('schools').doc(this.tid()).collection('turmas').doc(id).get();
+        if(d.exists) this._mdTurmaNew({_id:id,...d.data()});
+    } catch(e){ this.toast(e.message,'error'); }
+};
+
+S._delTurma2 = async function(id){
+    if(!confirm('Eliminar turma?')) return;
+    try { await db.collection('schools').doc(this.tid()).collection('turmas').doc(id).delete(); this.toast('Eliminada','success'); } catch(e){ this.toast(e.message,'error'); }
+};
+
+// =============================================
+// CURSOS PERSONALIZADOS
+// =============================================
+S._customCursos = [];
+
+S._loadCustomCursos = async function(tid){
+    try {
+        const snap = await db.collection('schools').doc(tid).collection('customCursos').get();
+        S._customCursos = [];
+        const el = document.getElementById('cursosCustom');
+        let h = '';
+
+        snap.forEach(d => {
+            const c = d.data();
+            S._customCursos.push(c.name);
+            h += `<span class="bg bg-wr" style="font-size:.62rem;padding:3px 8px;display:inline-flex;align-items:center;gap:3px">
+                ${c.name}
+                <span onclick="S._delCustomCurso('${d.id}','${c.name}')" style="cursor:pointer;color:#DC2626;font-weight:900;margin-left:2px" title="Remover">✕</span>
+            </span>`;
+        });
+
+        if(el) el.innerHTML = h;
+
+        // Actualizar filtro se existir
+        const filter = document.getElementById('cursoFilter');
+        if(filter){
+            S._customCursos.forEach(c => {
+                if(!filter.querySelector(`option[value="${c}"]`)){
+                    filter.innerHTML += `<option value="${c}">${c}</option>`;
+                }
+            });
+        }
+    } catch(e){}
+};
+
+S._saveCustomCurso = async function(name){
+    const tid = this.tid();
+    try {
+        // Verificar duplicidade
+        if(this.CURSOS_II_CICLO.includes(name) || this._customCursos.includes(name)) return;
+
+        await db.collection('schools').doc(tid).collection('customCursos').add({
+            name,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            createdBy: this.user.uid
+        });
+        this._customCursos.push(name);
+    } catch(e){ console.log('Erro ao guardar curso:', e); }
+};
+
+S._delCustomCurso = async function(id, name){
+    if(!confirm(`Remover curso "${name}"?`)) return;
+    try {
+        await db.collection('schools').doc(this.tid()).collection('customCursos').doc(id).delete();
+        this._customCursos = this._customCursos.filter(c => c !== name);
+        this._loadCustomCursos(this.tid());
+        this.toast('Curso removido','success');
+    } catch(e){ this.toast(e.message,'error'); }
+};
+
+// Modal para adicionar curso directamente
+S._mdCursoCustom = function(){
+    this.oModal('Novo Curso / Área de Formação', `
+        <form onsubmit="return false">
+            <div class="fg">
+                <label class="fl">Nome do Curso *</label>
+                <input type="text" id="cc_name" class="fi" placeholder="Ex: Engenharia Informática" required>
+            </div>
+            <div class="cd mt-s" style="padding:8px;background:rgba(37,99,235,.04);border-color:rgba(37,99,235,.12)">
+                <p class="fs-s"><span class="material-icons-outlined" style="font-size:.8rem;vertical-align:middle;color:#2563EB;margin-right:3px">info</span>
+                O curso ficará disponível na criação de turmas do II Ciclo.</p>
+            </div>
+        </form>
+    `, `<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
+        <button class="btn btn-r" onclick="S._saveCursoFromModal()"><span class="material-icons-outlined">save</span>Guardar</button>
+    `, '420px');
+};
+
+S._saveCursoFromModal = async function(){
+    const name = document.getElementById('cc_name')?.value?.trim();
+    if(!name) return this.toast('Nome obrigatório','error');
+
+    if(this.CURSOS_II_CICLO.includes(name) || this._customCursos.includes(name)){
+        return this.toast('Este curso já existe','warn');
+    }
+
+    try {
+        await this._saveCustomCurso(name);
+        this.toast('Curso adicionado!','success');
+        this.cModal();
+        this._loadCustomCursos(this.tid());
+    } catch(e){ this.toast(e.message,'error'); }
+};
+
+// =============================================
+// 3. GARANTIR QUE DISCIPLINAS FILTRAM POR ESCOLA
+// =============================================
+// A função clsFor já existe e filtra por tipo de escola
+// Reforçar que DISC também respeita o tipo
+
+(function(){
+    const origClOpts = S.clOpts;
+    S.clOpts = function(selected){
+        // Usar classes da escola, não todas
+        const classes = this.school ? this.clsFor(this.school.type) : this.allCls();
+        return '<option value="">Seleccionar...</option>' + 
+            classes.map(c => `<option value="${c}" ${c===selected?'selected':''}>${c}</option>`).join('');
+    };
+})();
+
+// XLSX turmas
+S.expTurmasXLSX = async function(){
+    try {
+        const snap = await db.collection('schools').doc(this.tid()).collection('turmas').get();
+        if(snap.empty) return this.toast('Sem turmas','warn');
+        const data = [];
+        snap.forEach(d => {
+            const t = d.data();
+            data.push({
+                Classe: t.classe, Turma: t.turma, Turno: t.turno,
+                Curso: t.curso || '', Sala: t.sala,
+                Capacidade: t.capacidade,
+                Estado: t.active !== false ? 'Activa' : 'Inactiva'
+            });
+        });
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Turmas');
+        XLSX.writeFile(wb, `Turmas_${new Date().toISOString().split('T')[0]}.xlsx`);
+        this.toast('Exportado!','success');
+    } catch(e){ this.toast(e.message,'error'); }
+};
+
+console.log('✅ Classes filtradas por nível da escola');
+console.log('✅ Cursos do II Ciclo: 21 cursos pré-definidos');
+console.log('✅ Cursos personalizados (director pode adicionar)');
+console.log('✅ Campo curso nas turmas do II Ciclo');
+console.log('✅ Filtro por curso na lista de turmas');
+</script>
+<!-- ================================================
+     FIM CLASSES + CURSOS
+     ================================================ -->
+<!-- ================================================
+     CURSO NOS DOCUMENTOS DO II CICLO
+     ================================================ -->
+<script>
+// =============================================
+// HELPER: Buscar curso do aluno (da turma)
+// =============================================
+S._getStudentCurso = async function(studentId, classe, turma){
+    const n = parseInt(classe);
+    if(n < 10 || n > 13) return ''; // Só II Ciclo
+
+    const tid = this.tid();
+    if(!tid) return '';
+
+    try {
+        // Buscar turma do aluno para ver o curso
+        const turmaSnap = await db.collection('schools').doc(tid).collection('turmas').get();
+        let curso = '';
+        turmaSnap.forEach(d => {
+            const t = d.data();
+            if(t.classe === classe && t.turma === turma && t.curso){
+                curso = t.curso;
+            }
+        });
+        return curso;
+    } catch(e){
+        return '';
+    }
+};
+
+// =============================================
+// REESCREVER DECLARAÇÃO COM CURSO
+// =============================================
+S._genDeclaracoesLote = async function(students, esc){
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    const tid = this.tid();
+
+    let yr = '';
+    try { const ay = await this.getActiveYear(); yr = ay ? ay.year : String(new Date().getFullYear()); }
+    catch(e){ yr = String(new Date().getFullYear()); }
+
+    for(let si = 0; si < students.length; si++){
+        if(si > 0) doc.addPage();
+        const s = students[si];
+        const isFem = s.sex === 'Feminino';
+        const pg = this.passG(s.classe);
+        const mg = this.maxG(s.classe);
+        const dirName = esc.directorName || '________________________________';
+
+        // Buscar curso
+        const curso = await this._getStudentCurso(s.id, s.classe, s.turma);
+        const isIICiclo = parseInt(s.classe) >= 10;
+        const cursoText = curso ? `, na área de ${curso}` : '';
+
+        // Cabeçalho
+        doc.setFontSize(12); doc.setFont('helvetica','bold'); doc.setTextColor(0);
+        doc.text('REPÚBLICA DE ANGOLA', 105, 16, {align:'center'});
+        doc.setFontSize(10); doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO', 105, 22, {align:'center'});
+        doc.setDrawColor(204,27,43); doc.setLineWidth(0.6); doc.line(30,25,180,25);
+        doc.setDrawColor(212,160,23); doc.setLineWidth(0.3); doc.line(30,26,180,26);
+
+        doc.setFontSize(18); doc.setFont('helvetica','bold');
+        doc.text('DECLARAÇÃO', 105, 35, {align:'center'});
+
+        // Data nascimento
+        let dobText = '____/____/________';
+        if(s.dob){ try { dobText = new Date(s.dob).toLocaleDateString('pt-AO',{day:'2-digit',month:'2-digit',year:'numeric'}); } catch(e){ dobText = s.dob; } }
+
+        // Determinar nível
+        let nivelText = 'o Ensino Primário';
+        if(parseInt(s.classe) >= 7 && parseInt(s.classe) <= 9) nivelText = 'o I Ciclo do Ensino Secundário Geral';
+        else if(parseInt(s.classe) >= 10) nivelText = `o II Ciclo do Ensino Secundário Geral${cursoText}`;
+
+        // Carregar notas
+        const discs = this.DISC[s.classe] || [];
+        const gradeRows = [];
+        let notaTotal = 0, notaCount = 0;
+
+        let histG = {};
+        try { const h = await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(s.classe).get(); if(h.exists && h.data().grades) histG = h.data().grades; } catch(e){}
+
+        for(const disc of discs){
+            let nota = null;
+            if(histG[disc] !== undefined){ nota = Number(histG[disc]); }
+            else {
+                const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+                let mts = [];
+                for(let t=1;t<=3;t++){
+                    try{ const g = await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${t}_${dk}`).get();
+                    if(g.exists && g.data().mt != null) mts.push(g.data().mt); }catch(e){}
+                }
+                if(mts.length > 0) nota = mts.reduce((a,b) => a+b, 0) / mts.length;
+            }
+            const rounded = nota !== null ? Math.round(nota) : null;
+            if(rounded !== null){ notaTotal += rounded; notaCount++; }
+            gradeRows.push([disc, rounded !== null ? rounded : '-', rounded !== null ? this._intToWords(rounded) : '-']);
+        }
+
+        const avg = notaCount > 0 ? Math.round(notaTotal / notaCount) : 0;
+
+        // Texto principal
+        const bodyText = `${dirName}, Director${isFem?'a':''} ${esc.number ? 'do Complexo Escolar Nº '+esc.number+', denominado ' : 'da Escola '}${esc.name || '________'}${esc.decree ? ', criado sob o '+esc.decree : ''}, ao abrigo do disposto na legislação em vigor, declara que ${s.name || '________'}, filh${isFem?'a':'o'} de ${s.fatherName || '________________________'} e de ${s.motherName || '________________________'}, ${isFem?'nascida':'nascido'} aos ${dobText}, natural de ${s.naturalidade || '________________'}${s.provOrigem ? ' província '+s.provOrigem : ''}, ${isFem?'portadora':'portador'} do B.I. nº ${s.bi || '________________'}, frequentou no ano lectivo ${yr} a ${s.classe || '____'}, turma "${s.turma || '__'}", turno da ${s.turno || '______'}${isIICiclo && curso ? ', no curso de '+curso : ''}, neste estabelecimento de ensino, tendo obtido as seguintes classificações:`;
+
+        doc.setFontSize(10); doc.setFont('helvetica','normal');
+        const mainLines = doc.splitTextToSize(bodyText, 165);
+        doc.text(mainLines, 20, 44);
+        let ty = 44 + mainLines.length * 4.8 + 4;
+
+        // Tabela
+        doc.autoTable({
+            startY: ty,
+            head: [['Disciplina', 'Nota', 'Por Extenso']],
+            body: gradeRows,
+            styles: {fontSize:8, cellPadding:2.5, halign:'center', lineColor:[180,180,180], lineWidth:0.2},
+            headStyles: {fillColor:[240,240,240], textColor:[0], fontStyle:'bold', lineColor:[150,150,150]},
+            columnStyles: {0:{halign:'left',cellWidth:65}, 2:{halign:'left',cellWidth:45}},
+            margin: {left:25, right:25},
+            didParseCell: function(data){
+                if(data.section==='body' && data.column.index===1){
+                    const v = Number(data.cell.raw);
+                    if(!isNaN(v)){ data.cell.styles.fontStyle='bold'; data.cell.styles.textColor = v >= pg ? [0,100,0] : [200,0,0]; }
+                    if(data.cell.raw === '-') data.cell.styles.textColor = [180,180,180];
+                }
+            }
+        });
+
+        ty = doc.lastAutoTable.finalY + 5;
+
+        // Média
+        doc.setFontSize(10); doc.setFont('helvetica','bold');
+        doc.text(`Média Final: ${avg} (${this._intToWords(avg)})`, 105, ty, {align:'center'});
+
+        ty += 6;
+        const finalText = `Para efeitos legais, é passada a presente DECLARAÇÃO, assinada por mim e autenticada com carimbo em uso neste estabelecimento de ensino.`;
+        doc.setFont('helvetica','normal');
+        const fLines = doc.splitTextToSize(finalText, 165);
+        doc.text(fLines, 20, ty);
+
+        ty += fLines.length * 4.8 + 8;
+        doc.text(`${esc.province || esc.municipality || 'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`, 105, ty, {align:'center'});
+
+        ty += 14;
+        doc.line(60, ty, 150, ty);
+        ty += 5;
+        doc.setFont('helvetica','bold');
+        doc.text('O Director', 105, ty, {align:'center'});
+        ty += 8;
+        doc.line(60, ty, 150, ty);
+        ty += 5;
+        doc.setFont('helvetica','normal');
+        doc.text(dirName, 105, ty, {align:'center'});
+
+        await this.addQR(doc, `SGE|DECL|${s.name}|${s.classe}|${curso||''}|${yr}`, 170, ty-28, 20);
+    }
+
+    const fn = students.length === 1 ? `Declaracao_${students[0].name?.replace(/\s+/g,'_')}.pdf` : `Declaracoes_Lote_${students.length}.pdf`;
+    doc.save(fn);
+    this.toast(`${students.length} declaração(ões) gerada(s)!`,'success');
+};
+
+// =============================================
+// REESCREVER CERTIFICADO COM CURSO
+// =============================================
+S._genCertificadosLote = async function(students, esc){
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    const tid = this.tid();
+
+    let yr = '';
+    try { const ay = await this.getActiveYear(); yr = ay ? ay.year : String(new Date().getFullYear()); }
+    catch(e){ yr = String(new Date().getFullYear()); }
+
+    for(let si = 0; si < students.length; si++){
+        if(si > 0) doc.addPage();
+        const s = students[si];
+        const isFem = s.sex === 'Feminino';
+
+        // Determinar certificado
+        const cn = parseInt(s.classe);
+        let certKey = '6ª Classe';
+        let nivelText = 'o Ensino Primário';
+        let certClasses = ['1ª Classe','2ª Classe','3ª Classe','4ª Classe','5ª Classe','6ª Classe'];
+
+        if(cn >= 7 && cn <= 9){
+            certKey = '9ª Classe';
+            nivelText = 'o I Ciclo do Ensino Secundário Geral';
+            certClasses = ['7ª Classe','8ª Classe','9ª Classe'];
+        } else if(cn >= 10 && cn <= 12){
+            certKey = '12ª Classe';
+            certClasses = ['10ª Classe','11ª Classe','12ª Classe'];
+        } else if(cn >= 13){
+            certKey = '13ª Classe';
+            certClasses = ['10ª Classe','11ª Classe','12ª Classe','13ª Classe'];
+        }
+
+        // Buscar curso
+        const curso = await this._getStudentCurso(s.id, s.classe, s.turma);
+        const isIICiclo = cn >= 10;
+
+        if(isIICiclo){
+            nivelText = `o II Ciclo do Ensino Secundário Geral${curso ? ', na área de '+curso : ''}`;
+        }
+
+        // Cabeçalho
+        doc.setFontSize(12); doc.setFont('helvetica','bold'); doc.setTextColor(0);
+        doc.text('REPÚBLICA DE ANGOLA', 105, 16, {align:'center'});
+        doc.setFontSize(10); doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO', 105, 22, {align:'center'});
+        doc.setDrawColor(204,27,43); doc.setLineWidth(0.6); doc.line(30,25,180,25);
+        doc.setDrawColor(212,160,23); doc.setLineWidth(0.3); doc.line(30,26,180,26);
+
+        doc.setFontSize(18); doc.setFont('helvetica','bold');
+        doc.text('CERTIFICADO', 105, 35, {align:'center'});
+
+        // Data nascimento
+        let dobText = '____/____/________';
+        if(s.dob){ try { dobText = new Date(s.dob).toLocaleDateString('pt-AO',{day:'2-digit',month:'2-digit',year:'numeric'}); } catch(e){ dobText = s.dob; } }
+
+        // Carregar notas de todas as classes
+        const allGradesMap = {};
+        let grandTotal = 0, grandCount = 0;
+        const allDiscsSet = new Set();
+
+        for(const classe of certClasses){
+            allGradesMap[classe] = {};
+            const discs = this.DISC[classe] || [];
+            discs.forEach(d => allDiscsSet.add(d));
+
+            let histG = {};
+            try { const hDoc = await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(classe).get();
+            if(hDoc.exists && hDoc.data().grades) histG = hDoc.data().grades; } catch(e){}
+
+            for(const disc of discs){
+                let nota = null;
+                if(histG[disc] !== undefined){ nota = Number(histG[disc]); }
+                else {
+                    const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+                    let mts = [];
+                    for(let t=1;t<=3;t++){
+                        try { const gDoc = await db.collection('schools').doc(tid).collection('grades').doc(`${s.id}_${t}_${dk}`).get();
+                        if(gDoc.exists && gDoc.data().mt != null) mts.push(gDoc.data().mt); } catch(e){}
+                    }
+                    if(mts.length > 0) nota = mts.reduce((a,b) => a+b, 0) / mts.length;
+                }
+                if(nota !== null){
+                    allGradesMap[classe][disc] = Math.round(nota);
+                    grandTotal += Math.round(nota);
+                    grandCount++;
+                }
+            }
+        }
+
+        const grandAvg = grandCount > 0 ? Math.round(grandTotal / grandCount) : 0;
+        const avgExtText = this._intToWords(grandAvg);
+        const dirName = esc.directorName || '________________________________';
+
+        // Texto principal
+        const mainText = `${dirName}, Director${isFem?'a':''} ${esc.number ? 'do Complexo Escolar Nº '+esc.number+', denominado ' : 'da Escola '}${esc.name || '________'}${esc.decree ? ', criado sob o '+esc.decree : ''}, ao abrigo do disposto na legislação em vigor, certifica que ${s.name || '________'}, filh${isFem?'a':'o'} de ${s.fatherName || '________________________'} e de ${s.motherName || '________________________'}, ${isFem?'nascida':'nascido'} aos ${dobText}, natural de ${s.naturalidade || '________________'}${s.provOrigem ? ' província '+s.provOrigem : ''}, ${isFem?'portadora':'portador'} do B.I. nº ${s.bi || '________________'}, concluiu no ano lectivo ${yr} ${nivelText}, conforme consta do processo individual nº ${s.process || '________________'}, com a média final de ${grandAvg} valores, obtida pelas seguintes classificações por disciplina:`;
+
+        doc.setFontSize(10); doc.setFont('helvetica','normal');
+        const mainLines = doc.splitTextToSize(mainText, 165);
+        doc.text(mainLines, 20, 44);
+        let ty = 44 + mainLines.length * 4.8 + 5;
+
+        // Tabela de notas
+        const allDiscs = [...allDiscsSet];
+        const shortClasses = certClasses.map(c => c.replace(' Classe','ª'));
+
+        const tableHead = ['Disciplinas', ...shortClasses, 'MF', 'Por Extenso'];
+        const tableBody = [];
+
+        allDiscs.forEach(disc => {
+            const row = [disc];
+            let dTotal = 0, dCount = 0;
+
+            certClasses.forEach(classe => {
+                const nota = allGradesMap[classe]?.[disc];
+                const classDiscs = this.DISC[classe] || [];
+                if(nota !== undefined){
+                    row.push(nota); dTotal += nota; dCount++;
+                } else if(classDiscs.includes(disc)){
+                    row.push('-');
+                } else {
+                    row.push('-');
+                }
+            });
+
+            const discAvg = dCount > 0 ? Math.round(dTotal / dCount) : '-';
+            const discAvgText = discAvg !== '-' ? this._intToWords(discAvg) : '-';
+            row.push(discAvg, discAvgText);
+            tableBody.push(row);
+        });
+
+        const pg = this.passG(s.classe);
+
+        doc.autoTable({
+            startY: ty,
+            head: [tableHead],
+            body: tableBody,
+            styles: {fontSize:7.5, cellPadding:2, halign:'center', lineColor:[180,180,180], lineWidth:0.2},
+            headStyles: {fillColor:[240,240,240], textColor:[0,0,0], fontStyle:'bold', fontSize:7, lineColor:[150,150,150]},
+            columnStyles: {
+                0: {halign:'left', cellWidth: 38},
+                [certClasses.length+1]: {fontStyle:'bold'},
+                [certClasses.length+2]: {halign:'left', cellWidth:30, fontSize:6.5}
+            },
+            alternateRowStyles: {fillColor:[252,250,248]},
+            margin: {left:18, right:18},
+            didParseCell: function(data){
+                if(data.section === 'body'){
+                    const colIdx = data.column.index;
+                    if(colIdx >= 1 && colIdx <= certClasses.length + 1){
+                        const val = Number(data.cell.raw);
+                        if(!isNaN(val) && val > 0) data.cell.styles.fontStyle = 'bold';
+                        if(data.cell.raw === '-') data.cell.styles.textColor = [180,180,180];
+                    }
+                }
+            }
+        });
+
+        ty = doc.lastAutoTable.finalY + 6;
+
+        // Nova página se necessário
+        if(ty > 240){ doc.addPage(); ty = 20; }
+
+        // Texto final
+        const bookNum = s.process || '________________';
+        const folha = `${certKey.replace(' Classe','')}-${yr}`;
+
+        const finalText = `Para efeitos legais, é passado o presente CERTIFICADO, que consta no livro de registo nº ${bookNum} folha ${folha}, assinado por mim e autenticado com carimbo à óleo / selo branco em uso neste estabelecimento de ensino.`;
+
+        doc.setFontSize(10); doc.setFont('helvetica','normal');
+        const finalLines = doc.splitTextToSize(finalText, 165);
+        doc.text(finalLines, 20, ty);
+
+        ty += finalLines.length * 4.8 + 8;
+        doc.text(`${esc.province || esc.municipality || 'Luanda'}, ${new Date().toLocaleDateString('pt-AO',{day:'numeric',month:'long',year:'numeric'})}`, 105, ty, {align:'center'});
+
+        ty += 10;
+        doc.setFontSize(9);
+        doc.text('Conferido por:', 20, ty);
+
+        ty += 14;
+        doc.setDrawColor(0); doc.setLineWidth(0.3);
+        doc.line(60, ty, 150, ty);
+        ty += 5;
+        doc.setFontSize(10); doc.setFont('helvetica','bold');
+        doc.text('O Director', 105, ty, {align:'center'});
+        ty += 8;
+        doc.line(60, ty, 150, ty);
+        ty += 5;
+        doc.setFont('helvetica','normal');
+        doc.text(dirName, 105, ty, {align:'center'});
+
+        await this.addQR(doc, `SGE-NG|CERT|${s.name}|${certKey}|${curso||''}|MF:${grandAvg}|${yr}`, 170, ty-30, 20);
+    }
+
+    const fn = students.length === 1
+        ? `Certificado_${students[0].name?.replace(/\s+/g,'_') || 'aluno'}.pdf`
+        : `Certificados_Lote_${students.length}.pdf`;
+
+    doc.save(fn);
+    this.toast(`${students.length} certificado(s) gerado(s)!`,'success');
+};
+
+// =============================================
+// REESCREVER BOLETINS COM CURSO
+// =============================================
+S._genBoletimPDF = async function(sid, s, esc){
+    const periodo = prompt('Período:\n1 — 1º Trimestre\n2 — 2º Trimestre\n3 — 3º Trimestre\nA — Anual\n\nDigite 1, 2, 3 ou A:','A');
+    if(!periodo) return;
+    const isAnual = periodo.toUpperCase() === 'A';
+    const trimNum = isAnual ? null : parseInt(periodo);
+    if(!isAnual && (isNaN(trimNum) || trimNum < 1 || trimNum > 3)) return this.toast('Inválido','error');
+
+    const tid = this.tid();
+    const discs = this.DISC[s.classe] || [];
+    const pg = this.passG(s.classe);
+    const mg = this.maxG(s.classe);
+    const periodLabel = isAnual ? 'ANUAL' : `${trimNum}º TRIMESTRE`;
+
+    // Buscar curso
+    const curso = await this._getStudentCurso(sid, s.classe, s.turma);
+    const isIICiclo = parseInt(s.classe) >= 10;
+
+    let yr = '';
+    try { const ay = await this.getActiveYear(); yr = ay ? ay.year : String(new Date().getFullYear()); } catch(e){ yr = String(new Date().getFullYear()); }
+
+    // Carregar notas
+    const gradeData = [];
+    for(const disc of discs){
+        const dk = disc.replace(/[^a-zA-ZÀ-ú0-9]/g,'');
+        const row = {disc, mt1:null, mt2:null, mt3:null, mf:null, mac:null, npt:null, mt:null};
+        for(let t=1;t<=3;t++){
+            try { const g = await db.collection('schools').doc(tid).collection('grades').doc(`${sid}_${t}_${dk}`).get();
+            if(g.exists){ const gd = g.data(); row[`mt${t}`] = gd.mt; if(t === trimNum){ row.mac = gd.mac; row.npt = gd.npt; row.mt = gd.mt; } } } catch(e){}
+        }
+        const mts = [row.mt1,row.mt2,row.mt3].filter(v => v !== null);
+        if(mts.length > 0) row.mf = Math.round(mts.reduce((a,b) => a+b, 0) / mts.length);
+        gradeData.push(row);
+    }
+
+    // Presenças
+    let tP=0, tF=0;
+    try { const att = await db.collection('schools').doc(tid).collection('attendance').where('studentId','==',sid).get();
+    att.forEach(d => { if(d.data().status === 'P') tP++; else if(d.data().status === 'F') tF++; }); } catch(e){}
+
+    // Gerar 4 boletins
+    const {jsPDF} = window.jspdf;
+    const doc = new jsPDF('p','mm','a4');
+    const bw=92, bh=135, bmx=6, bmy=6, bgx=6, bgy=5;
+
+    for(let i=0; i<4; i++){
+        const col=i%2, row2=Math.floor(i/2);
+        const bx=bmx+col*(bw+bgx), by=bmy+row2*(bh+bgy);
+
+        doc.setDrawColor(180); doc.setLineWidth(.2); doc.rect(bx,by,bw,bh);
+        doc.setFillColor(204,27,43); doc.rect(bx,by,bw,1.5,'F');
+
+        doc.setFontSize(4.5); doc.setTextColor(40); doc.setFont('helvetica','bold');
+        doc.text('REPÚBLICA DE ANGOLA',bx+bw/2,by+5,{align:'center'});
+        doc.setFontSize(3.8); doc.setFont('helvetica','normal');
+        doc.text('MINISTÉRIO DA EDUCAÇÃO',bx+bw/2,by+8,{align:'center'});
+        doc.setFontSize(4.5); doc.setFont('helvetica','bold');
+        doc.text((esc.name||'').toUpperCase().substring(0,42),bx+bw/2,by+12,{align:'center'});
+        doc.setFillColor(212,160,23); doc.rect(bx+2,by+16,bw-4,.4,'F');
+
+        doc.setFontSize(5.5); doc.setTextColor(204,27,43);
+        doc.text(`BOLETIM — ${periodLabel}`,bx+bw/2,by+20,{align:'center'});
+
+        doc.setFontSize(3.5); doc.setTextColor(40); doc.setFont('helvetica','normal');
+        doc.text(`${(s.name||'').substring(0,30)} | ${s.classe||''} | Turma ${s.turma||''} | ${yr}`,bx+3,by+24);
+
+        // Curso (só II Ciclo)
+        if(isIICiclo && curso){
+            doc.setFontSize(3); doc.setTextColor(204,27,43); doc.setFont('helvetica','bold');
+            doc.text(`Curso: ${curso}`,bx+3,by+27);
+            doc.setTextColor(40); doc.setFont('helvetica','normal');
+        }
+
+        const tY = by + (isIICiclo && curso ? 29 : 27);
+
+        if(isAnual){
+            doc.setFillColor(240,238,234); doc.rect(bx+2,tY,bw-4,3.5,'F');
+            doc.setFontSize(2.5); doc.setTextColor(60); doc.setFont('helvetica','bold');
+            doc.text('Disciplina',bx+3,tY+2.4); doc.text('1ºT',bx+42,tY+2.4); doc.text('2ºT',bx+52,tY+2.4); doc.text('3ºT',bx+62,tY+2.4); doc.text('MF',bx+74,tY+2.4);
+
+            let ry = tY + 4.5;
+            let mgT=0, mgC=0;
+
+            gradeData.forEach((r,idx) => {
+                if(idx%2===0){doc.setFillColor(252,250,248);doc.rect(bx+2,ry-1,bw-4,3,'F')}
+                doc.setFontSize(2.5); doc.setFont('helvetica','normal'); doc.setTextColor(40);
+                doc.text(r.disc.substring(0,17),bx+3,ry+1.5);
+                const pn=(v,x2)=>{if(v===null){doc.setTextColor(200);doc.text('—',x2,ry+1.5);doc.setTextColor(40);return}const n2=Math.round(v);doc.setTextColor(n2>=pg?5:220,n2>=pg?130:38,n2>=pg?90:38);doc.setFont('helvetica','bold');doc.text(String(n2),x2,ry+1.5);doc.setFont('helvetica','normal');doc.setTextColor(40)};
+                pn(r.mt1,bx+42);pn(r.mt2,bx+52);pn(r.mt3,bx+62);pn(r.mf,bx+74);
+                if(r.mf!==null){mgT+=r.mf;mgC++}
+                ry += 3;
+            });
+
+            const avg2=mgC>0?Math.round(mgT/mgC):null;
+            ry+=1;
+            doc.setFillColor(248,246,242);doc.rect(bx+2,ry-1,bw-4,4,'F');
+            doc.setFontSize(3);doc.setFont('helvetica','bold');doc.setTextColor(40);
+            doc.text('MÉDIA:',bx+3,ry+2);
+            if(avg2!==null){doc.setTextColor(avg2>=pg?5:220,avg2>=pg?130:38,avg2>=pg?90:38);doc.text(String(avg2),bx+bw-10,ry+2)}
+        } else {
+            doc.setFillColor(240,238,234);doc.rect(bx+2,tY,bw-4,3.5,'F');
+            doc.setFontSize(2.5);doc.setTextColor(60);doc.setFont('helvetica','bold');
+            doc.text('Disciplina',bx+3,tY+2.4);doc.text('MAC',bx+45,tY+2.4);doc.text('PT',bx+57,tY+2.4);doc.text('MT',bx+69,tY+2.4);
+
+            let ry=tY+4.5;
+            let mgT=0,mgC=0;
+
+            gradeData.forEach((r,idx)=>{
+                if(idx%2===0){doc.setFillColor(252,250,248);doc.rect(bx+2,ry-1,bw-4,3,'F')}
+                doc.setFontSize(2.5);doc.setFont('helvetica','normal');doc.setTextColor(40);
+                doc.text(r.disc.substring(0,18),bx+3,ry+1.5);
+                const pn=(v,x2)=>{if(v===null){doc.setTextColor(200);doc.text('—',x2,ry+1.5);doc.setTextColor(40);return}const n2=Math.round(v*10)/10;doc.setTextColor(n2>=pg?5:220,n2>=pg?130:38,n2>=pg?90:38);doc.setFont('helvetica','bold');doc.text(String(n2),x2,ry+1.5);doc.setFont('helvetica','normal');doc.setTextColor(40)};
+                pn(r.mac,bx+45);pn(r.npt,bx+57);pn(r.mt,bx+69);
+                if(r.mt!==null){mgT+=r.mt;mgC++}
+                ry+=3;
+            });
+
+            const avg3=mgC>0?Math.round(mgT/mgC):null;
+            ry+=1;
+            doc.setFillColor(248,246,242);doc.rect(bx+2,ry-1,bw-4,4,'F');
+            doc.setFontSize(3);doc.setFont('helvetica','bold');doc.setTextColor(40);
+            doc.text('MÉDIA:',bx+3,ry+2);
+            if(avg3!==null){doc.setTextColor(avg3>=pg?5:220,avg3>=pg?130:38,avg3>=pg?90:38);doc.text(String(avg3),bx+bw-10,ry+2)}
+        }
+
+        // Rodapé
+        doc.setTextColor(40);doc.setFont('helvetica','normal');doc.setFontSize(2.5);
+        doc.text(`Presenças: ${tP} | Faltas: ${tF}`,bx+3,by+bh-9);
+        doc.text(`${esc.municipality||''}, ${new Date().toLocaleDateString('pt-AO')}`,bx+bw/2,by+bh-5,{align:'center'});
+        doc.setFillColor(204,27,43);doc.rect(bx,by+bh-1,bw,1,'F');
+    }
+
+    // Linhas de corte
+    doc.setDrawColor(200);doc.setLineWidth(.1);doc.setLineDashPattern([2,2],0);
+    doc.line(bmx+bw+bgx/2,0,bmx+bw+bgx/2,297);
+    doc.line(0,bmy+bh+bgy/2,210,bmy+bh+bgy/2);
+    doc.setLineDashPattern([],0);
+
+    doc.save(`Boletim_${periodLabel}_${(s.name||'aluno').replace(/\s+/g,'_')}.pdf`);
+    this.toast(`Boletim ${periodLabel} gerado!`,'success');
+};
+
+console.log('✅ Documentos com curso do II Ciclo:');
+console.log('   Declaração: "na área de Ciências Humanas"');
+console.log('   Certificado: "II Ciclo, na área de Matemática e Física"');
+console.log('   Boletim: Linha "Curso: ..." no cabeçalho');
+</script>
+<!-- ================================================
+     FIM CURSO NOS DOCUMENTOS
+     ================================================ -->
 
 </body>
 </html>
