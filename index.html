@@ -19263,5 +19263,587 @@ console.log('Certificado e Declaracao corrigidos - sem erros de sintaxe');
 <!-- ================================================
      FIM CORRECAO CERT/DECL
      ================================================ -->
+<!-- ================================================
+     INSÍGNIA CONFIGURÁVEL + PAUTA PROFESSOR
+     ================================================ -->
+<script>
+// =============================================
+// 1. CONFIG SISTEMA — Upload da Insígnia
+// =============================================
+S._routes['system-config'] = function(){
+    if(!this.hasRole('super_admin')) return this.pgAccessDenied();
+    const pc = document.getElementById('pgC');
+
+    pc.innerHTML = '<div class="fade"><h2 class="fw8 fs-l mb-l">Configuracoes do Sistema</h2><div id="sysConfArea"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div></div>';
+
+    this._loadSysConfig();
+};
+
+S._loadSysConfig = async function(){
+    var el = document.getElementById('sysConfArea');
+    if(!el) return;
+
+    var currentInsignia = '';
+    try {
+        var cfgDoc = await db.collection('system').doc('config').get();
+        if(cfgDoc.exists && cfgDoc.data().insignia){
+            currentInsignia = cfgDoc.data().insignia;
+        }
+    } catch(e){}
+
+    el.innerHTML = ''
+        + '<div class="g2 mb-l">'
+        // Insígnia
+        + '<div class="cd">'
+        + '<h3 class="fw7 fs-m mb-m"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#D4A017;font-size:1rem">shield</span>Insignia / Brasao Oficial</h3>'
+        + '<p class="tm fs-s mb-m">Esta imagem aparecera no topo de todos os documentos oficiais (boletins, declaracoes, certificados, passes e pautas).</p>'
+        + '<div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">'
+        + '<div style="width:80px;height:80px;border:2px dashed #D4A017;border-radius:10px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#faf9f7" id="insigniaPreviewBox">'
+        + (currentInsignia ? '<img src="' + currentInsignia + '" style="width:100%;height:100%;object-fit:contain" id="insigniaPreviewImg">' : '<span class="material-icons-outlined" style="color:#D4A017;font-size:2rem">shield</span>')
+        + '</div>'
+        + '<div>'
+        + '<input type="file" id="insigniaFile" accept="image/*" style="display:none" onchange="S._previewInsignia(this)">'
+        + '<button class="btn btn-g btn-s" onclick="document.getElementById(\'insigniaFile\').click()"><span class="material-icons-outlined" style="font-size:.85rem">upload</span>Carregar Imagem</button>'
+        + '<p class="fs-s tm mt-s">PNG ou JPG, fundo transparente recomendado</p>'
+        + (currentInsignia ? '<button class="btn btn-o btn-s mt-s" style="border-color:#DC2626;color:#DC2626" onclick="S._removeInsignia()"><span class="material-icons-outlined" style="font-size:.8rem">delete</span>Remover</button>' : '')
+        + '</div>'
+        + '</div>'
+        + '<button class="btn btn-r" onclick="S._saveInsignia()" id="saveInsigniaBtn"><span class="material-icons-outlined">save</span>Guardar Insignia</button>'
+        + '</div>'
+
+        // Info Sistema
+        + '<div class="cd">'
+        + '<h3 class="fw7 fs-m mb-m"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#059669;font-size:1rem">info</span>Informacoes do Sistema</h3>'
+        + '<div style="font-size:.84rem;display:grid;gap:6px">'
+        + '<p><strong>Sistema:</strong> SGE-NG</p>'
+        + '<p><strong>Versao:</strong> 2.0.0</p>'
+        + '<p><strong>Plataforma:</strong> Web (Firebase)</p>'
+        + '<p><strong>Projecto:</strong> sge3-3c35c</p>'
+        + '</div>'
+        + '</div>'
+        + '</div>'
+
+        // Segurança
+        + '<div class="cd mb-l">'
+        + '<h3 class="fw7 fs-m mb-m">Seguranca</h3>'
+        + '<div style="font-size:.84rem;display:grid;gap:5px">'
+        + '<p><strong>Auth:</strong> Firebase Auth</p>'
+        + '<p><strong>RBAC:</strong> 9 niveis</p>'
+        + '<p><strong>Sessao:</strong> 30 min timeout</p>'
+        + '</div>'
+        + '</div>'
+
+        // Zona perigo
+        + '<div class="cd">'
+        + '<h3 class="fw7 fs-m mb-m tr">Zona de Perigo</h3>'
+        + '<button class="btn btn-o btn-s" style="border-color:#DC2626;color:#DC2626" onclick="S._clearLogs()"><span class="material-icons-outlined" style="font-size:.85rem">delete_sweep</span>Limpar Logs</button>'
+        + '</div>';
+};
+
+S._previewInsignia = function(input){
+    if(!input.files || !input.files[0]) return;
+    var file = input.files[0];
+
+    if(!file.type.startsWith('image/')){
+        this.toast('Seleccione uma imagem', 'error');
+        input.value = '';
+        return;
+    }
+
+    S._processPhoto(file).then(function(data){
+        var box = document.getElementById('insigniaPreviewBox');
+        if(box) box.innerHTML = '<img src="' + data + '" style="width:100%;height:100%;object-fit:contain" id="insigniaPreviewImg">';
+        S._pendingInsignia = data;
+    }).catch(function(e){
+        S.toast('Erro: ' + e, 'error');
+    });
+};
+
+S._saveInsignia = async function(){
+    var btn = document.getElementById('saveInsigniaBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Guardando...'; }
+
+    try {
+        var data = {};
+
+        if(S._pendingInsignia){
+            data.insignia = S._pendingInsignia;
+            S._insigniaData = S._pendingInsignia;
+        }
+
+        data.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+        await db.collection('system').doc('config').update(data);
+
+        S._pendingInsignia = null;
+        this.toast('Insignia guardada! Sera usada em todos os documentos.', 'success');
+
+        if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">save</span>Guardar Insignia'; }
+        this._loadSysConfig();
+    } catch(e){
+        if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">save</span>Guardar Insignia'; }
+        this.toast('Erro: ' + e.message, 'error');
+    }
+};
+
+S._removeInsignia = async function(){
+    if(!confirm('Remover a insignia? Os documentos usarao a insignia gerada automaticamente.')) return;
+    try {
+        await db.collection('system').doc('config').update({
+            insignia: firebase.firestore.FieldValue.delete(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        S._insigniaData = null;
+        this.toast('Insignia removida', 'success');
+        this._loadSysConfig();
+    } catch(e){ this.toast('Erro: ' + e.message, 'error'); }
+};
+
+// =============================================
+// 2. CARREGAR INSÍGNIA DO SISTEMA
+// =============================================
+S._getInsigniaForPDF = async function(){
+    // Cache
+    if(S._insigniaData) return S._insigniaData;
+
+    // 1. Verificar config do sistema
+    try {
+        var cfgDoc = await db.collection('system').doc('config').get();
+        if(cfgDoc.exists && cfgDoc.data().insignia){
+            S._insigniaData = cfgDoc.data().insignia;
+            return S._insigniaData;
+        }
+    } catch(e){}
+
+    // 2. Verificar carimbo da escola
+    if(S.school && S.school.stamp){
+        S._insigniaData = S.school.stamp;
+        return S._insigniaData;
+    }
+
+    // 3. Gerar automaticamente
+    return await S._generateInsignia();
+};
+
+// =============================================
+// 3. PAUTA DO PROFESSOR — PDF e XLSX
+// =============================================
+S._pgGradesProfessor = async function(){
+    var pc = document.getElementById('pgC');
+    var tid = this.tid();
+
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l">'
+        + '<div><h2 class="fw8 fs-l">Lancar Notas</h2>'
+        + '<p class="tm fs-s">Seleccione a turma e disciplina</p></div>'
+        + '</div>'
+        + '<div id="gpContent"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div>'
+        + '</div>';
+
+    var assigns = await this._loadProfAssignments();
+
+    if(assigns.length === 0){
+        document.getElementById('gpContent').innerHTML = '<div class="cd tc" style="padding:50px"><span class="material-icons-outlined" style="font-size:3rem;color:#D4A017">assignment</span><h3 class="fw7 mt-m">Sem Atribuicoes</h3></div>';
+        return;
+    }
+
+    var uniqueClasses = [];
+    var uniqueTurmas = {};
+    var discsByKey = {};
+    var seen = {};
+
+    for(var i = 0; i < assigns.length; i++){
+        var a = assigns[i];
+        if(!seen[a.classe]){ seen[a.classe] = true; uniqueClasses.push(a.classe); }
+        if(!uniqueTurmas[a.classe]) uniqueTurmas[a.classe] = [];
+        if(uniqueTurmas[a.classe].indexOf(a.turma) === -1) uniqueTurmas[a.classe].push(a.turma);
+        var key = a.classe + '|' + a.turma;
+        if(!discsByKey[key]) discsByKey[key] = [];
+        discsByKey[key].push(a.disciplina);
+    }
+
+    uniqueClasses.sort();
+
+    var clOpts = '<option value="">-- Seleccionar --</option>';
+    for(var c = 0; c < uniqueClasses.length; c++){
+        clOpts += '<option value="' + uniqueClasses[c] + '">' + uniqueClasses[c] + '</option>';
+    }
+
+    var quickCards = '';
+    for(var q = 0; q < assigns.length; q++){
+        var aq = assigns[q];
+        quickCards += '<div class="cd" style="padding:12px;cursor:pointer;border-left:3px solid #D4A017;transition:all .15s" '
+            + 'onclick="S._gpQuickFill(\'' + aq.classe + '\',\'' + aq.turma + '\',\'' + aq.disciplina + '\')" '
+            + 'onmouseover="this.style.transform=\'translateY(-1px)\'" onmouseout="this.style.transform=\'\'">'
+            + '<span class="fw7">' + aq.classe + ' -- Turma ' + aq.turma + '</span><br>'
+            + '<span class="tm fs-s">' + aq.disciplina + '</span>'
+            + (aq.horario ? '<br><span class="fs-s" style="color:#D4A017">' + aq.horario + '</span>' : '')
+            + '</div>';
+    }
+
+    document.getElementById('gpContent').innerHTML = ''
+        + '<div class="cd mb-l">'
+        + '<h3 class="fw7 fs-m mb-m">Seleccionar Pauta</h3>'
+        + '<div class="g4">'
+        + '<div class="fg"><label class="fl">Classe *</label><select id="gp_cl" class="fs" onchange="S._gpUpdateTm()">' + clOpts + '</select></div>'
+        + '<div class="fg"><label class="fl">Turma *</label><select id="gp_tm" class="fs" onchange="S._gpUpdateDc()"><option value="">--</option></select></div>'
+        + '<div class="fg"><label class="fl">Disciplina *</label><select id="gp_dc" class="fs"><option value="">--</option></select></div>'
+        + '<div class="fg"><label class="fl">Trimestre *</label><select id="gp_tr" class="fs"><option value="1">1. Trim.</option><option value="2">2. Trim.</option><option value="3">3. Trim.</option></select></div>'
+        + '</div>'
+        + '<div style="display:flex;gap:5px;margin-top:8px;flex-wrap:wrap">'
+        + '<button class="btn btn-r" onclick="S._gpLoad()"><span class="material-icons-outlined">grading</span>Carregar</button>'
+        + '<button class="btn btn-g btn-s" onclick="S._gpExportPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>Pauta PDF</button>'
+        + '<button class="btn btn-o btn-s" onclick="S._gpExportXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>'
+        + '</div>'
+        + '</div>'
+        + '<div class="cd mb-l"><h3 class="fw7 fs-m mb-m">Acesso Rapido</h3><div class="g2">' + quickCards + '</div></div>'
+        + '<div id="gpArea"></div>';
+
+    S._gpTurmas = uniqueTurmas;
+    S._gpDiscs = discsByKey;
+};
+
+S._gpUpdateTm = function(){
+    var cl = document.getElementById('gp_cl');
+    var tm = document.getElementById('gp_tm');
+    if(!cl || !tm) return;
+    tm.innerHTML = '<option value="">--</option>';
+    var turmas = S._gpTurmas[cl.value] || [];
+    for(var i = 0; i < turmas.length; i++){
+        tm.innerHTML += '<option value="' + turmas[i] + '">Turma ' + turmas[i] + '</option>';
+    }
+    S._gpUpdateDc();
+};
+
+S._gpUpdateDc = function(){
+    var cl = document.getElementById('gp_cl');
+    var tm = document.getElementById('gp_tm');
+    var dc = document.getElementById('gp_dc');
+    if(!cl || !tm || !dc) return;
+    dc.innerHTML = '<option value="">--</option>';
+    var key = cl.value + '|' + tm.value;
+    var discs = S._gpDiscs[key] || [];
+    for(var i = 0; i < discs.length; i++){
+        dc.innerHTML += '<option value="' + discs[i] + '">' + discs[i] + '</option>';
+    }
+};
+
+S._gpQuickFill = function(classe, turma, disc){
+    var clEl = document.getElementById('gp_cl');
+    if(clEl) clEl.value = classe;
+    S._gpUpdateTm();
+    setTimeout(function(){
+        var tmEl = document.getElementById('gp_tm');
+        if(tmEl) tmEl.value = turma;
+        S._gpUpdateDc();
+        setTimeout(function(){
+            var dcEl = document.getElementById('gp_dc');
+            if(dcEl) dcEl.value = disc;
+        }, 100);
+    }, 100);
+};
+
+// Carregar pauta professor
+S._gpLoad = async function(){
+    var tid = S.tid();
+    var cl = document.getElementById('gp_cl');
+    var tm = document.getElementById('gp_tm');
+    var tr = document.getElementById('gp_tr');
+    var dc = document.getElementById('gp_dc');
+    var area = document.getElementById('gpArea');
+
+    if(!cl || !cl.value || !tm || !tm.value || !dc || !dc.value){
+        S.toast('Seleccione classe, turma e disciplina', 'error');
+        return;
+    }
+
+    var classe = cl.value, turma = tm.value, trim = tr.value, disc = dc.value;
+    var mg = S.maxG(classe), pg = S.passG(classe);
+    var dk = disc.replace(/[^a-zA-Z0-9]/g, '');
+
+    area.innerHTML = '<div class="fc" style="padding:20px"><div class="ld-spin" style="width:24px;height:24px;border-width:2px"></div></div>';
+
+    try {
+        var students = await S._getStudentsByClassTurma(tid, classe, turma);
+        if(!students.length){
+            area.innerHTML = '<div class="cd tc" style="padding:20px"><p class="tm">Sem alunos</p></div>';
+            return;
+        }
+
+        var trimOpen = false;
+        try { var ay = await S.getActiveYear(); trimOpen = ay ? (ay['trimestre' + trim] && ay['trimestre' + trim].active === true) : false; } catch(e){}
+
+        var h = '<div class="cd p0" style="overflow:hidden">'
+            + '<div style="padding:10px 12px;border-bottom:2px solid #CC1B2B;display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px">'
+            + '<div><strong style="color:#CC1B2B">' + classe + ' -- Turma ' + turma + '</strong> | <span style="color:#D4A017">' + disc + '</span> | ' + trim + '. Trim.</div>'
+            + '<div style="font-size:.7rem;display:flex;gap:6px"><span>0--' + mg + '</span><span style="color:#059669">Pos >=' + pg + '</span>'
+            + '<span class="bg ' + (trimOpen ? 'bg-ok' : 'bg-er') + '">' + (trimOpen ? 'Aberto' : 'Fechado') + '</span></div>'
+            + '</div>'
+            + '<div class="ovx"><table class="tbl"><thead><tr><th>N.</th><th style="min-width:140px">Nome</th><th class="tc" style="width:70px">MAC</th><th class="tc" style="width:70px">NPT</th><th class="tc" style="width:70px">MT</th><th class="tc" style="width:80px">Result.</th></tr></thead><tbody>';
+
+        for(var i = 0; i < students.length; i++){
+            var s = students[i];
+            var ro = !trimOpen ? 'readonly disabled style="opacity:.5"' : '';
+            h += '<tr><td class="fw7">' + (i+1) + '</td>'
+                + '<td class="fw7 fs-s">' + (s.name || '') + '</td>'
+                + '<td class="tc"><input type="number" min="0" max="' + mg + '" step="0.5" class="fi" style="width:60px;text-align:center;padding:4px 2px;font-weight:700" id="pm_' + s.id + '" onchange="S._gpCalc(\'' + s.id + '\',' + mg + ',' + pg + ')" ' + ro + '></td>'
+                + '<td class="tc"><input type="number" min="0" max="' + mg + '" step="0.5" class="fi" style="width:60px;text-align:center;padding:4px 2px;font-weight:700" id="pn_' + s.id + '" onchange="S._gpCalc(\'' + s.id + '\',' + mg + ',' + pg + ')" ' + ro + '></td>'
+                + '<td class="tc fw8" style="font-size:.95rem" id="pt_' + s.id + '">--</td>'
+                + '<td class="tc" id="pr_' + s.id + '">--</td>'
+                + '</tr>';
+        }
+
+        h += '</tbody></table></div>';
+
+        if(trimOpen){
+            h += '<div style="padding:10px;border-top:1px solid #E5E7EB;display:flex;justify-content:flex-end">'
+                + '<button class="btn btn-gn" onclick="S._gpSave(\'' + classe + '\',\'' + turma + '\',\'' + trim + '\',\'' + disc + '\',\'' + dk + '\')" id="gpSvBt"><span class="material-icons-outlined">save</span>Guardar Notas</button>'
+                + '</div>';
+        }
+        h += '</div>';
+        area.innerHTML = h;
+
+        // Guardar dados para export
+        S._gpCurrentData = {students: students, classe: classe, turma: turma, trim: trim, disc: disc, dk: dk, mg: mg, pg: pg};
+
+        // Carregar notas existentes
+        for(var j = 0; j < students.length; j++){
+            var st = students[j];
+            try {
+                var gDoc = await db.collection('schools').doc(tid).collection('grades').doc(st.id + '_' + trim + '_' + dk).get();
+                if(gDoc.exists){
+                    var gd = gDoc.data();
+                    var macEl = document.getElementById('pm_' + st.id);
+                    var nptEl = document.getElementById('pn_' + st.id);
+                    if(macEl && gd.mac != null) macEl.value = gd.mac;
+                    if(nptEl && gd.npt != null) nptEl.value = gd.npt;
+                    S._gpCalc(st.id, mg, pg);
+                }
+            } catch(e){}
+        }
+
+    } catch(e){
+        area.innerHTML = '<p class="tr">' + e.message + '</p>';
+    }
+};
+
+S._gpCalc = function(sid, mg, pg){
+    var macEl = document.getElementById('pm_' + sid);
+    var nptEl = document.getElementById('pn_' + sid);
+    var mtEl = document.getElementById('pt_' + sid);
+    var resEl = document.getElementById('pr_' + sid);
+    if(!macEl || !nptEl || !mtEl || !resEl) return;
+
+    var mac = parseFloat(macEl.value);
+    var npt = parseFloat(nptEl.value);
+
+    if(isNaN(mac) || isNaN(npt)){ mtEl.textContent = '--'; resEl.innerHTML = '--'; return; }
+
+    var mt = Math.round(((mac + npt) / 2) * 10) / 10;
+    var pass = mt >= pg;
+
+    mtEl.textContent = mt;
+    mtEl.style.color = pass ? '#059669' : '#DC2626';
+    resEl.innerHTML = '<span class="bg ' + (pass ? 'bg-ok' : 'bg-er') + '" style="font-size:.62rem">' + (pass ? 'Pos' : 'Neg') + '</span>';
+};
+
+S._gpSave = async function(cl, tm, tr, dc, dk){
+    var tid = S.tid();
+    var btn = document.getElementById('gpSvBt');
+    if(btn){ btn.disabled = true; btn.innerHTML = 'Guardando...'; }
+
+    try {
+        var students = await S._getStudentsByClassTurma(tid, cl, tm);
+        var batch = db.batch();
+        var saved = 0;
+        var mg = S.maxG(cl);
+
+        for(var i = 0; i < students.length; i++){
+            var s = students[i];
+            var macEl = document.getElementById('pm_' + s.id);
+            var nptEl = document.getElementById('pn_' + s.id);
+            if(!macEl || !nptEl) continue;
+            if(macEl.value === '' && nptEl.value === '') continue;
+
+            var mac = parseFloat(macEl.value);
+            var npt = parseFloat(nptEl.value);
+            var mt = (!isNaN(mac) && !isNaN(npt)) ? Math.round(((mac + npt) / 2) * 10) / 10 : null;
+
+            var ref = db.collection('schools').doc(tid).collection('grades').doc(s.id + '_' + tr + '_' + dk);
+            batch.set(ref, {
+                studentId: s.id, studentName: s.name || '', studentSex: s.sex || '',
+                classe: cl, turma: tm, trimestre: tr, disciplina: dc,
+                mac: isNaN(mac) ? null : mac, npt: isNaN(npt) ? null : npt, mt: mt,
+                schoolId: tid, updatedAt: firebase.firestore.FieldValue.serverTimestamp(), updatedBy: S.user.uid
+            }, {merge: true});
+            saved++;
+        }
+
+        if(saved > 0){
+            await batch.commit();
+            S.toast(saved + ' notas guardadas!', 'success');
+        } else {
+            S.toast('Nenhuma nota', 'warn');
+        }
+
+        if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">save</span>Guardar Notas'; }
+    } catch(e){
+        if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">save</span>Guardar Notas'; }
+        S.toast('Erro: ' + e.message, 'error');
+    }
+};
+
+// =============================================
+// PROFESSOR — EXPORTAR PAUTA PDF
+// =============================================
+S._gpExportPDF = async function(){
+    var d = S._gpCurrentData;
+    if(!d || !d.students){ S.toast('Carregue a pauta primeiro', 'warn'); return; }
+
+    var tid = S.tid();
+    var esc = S.school || {};
+    var insignia = null;
+    try { insignia = await S._getInsigniaForPDF(); } catch(e){}
+
+    var jsPDF2 = window.jspdf.jsPDF;
+    var doc = new jsPDF2('p', 'mm', 'a4');
+
+    // Cabeçalho com insígnia
+    if(insignia){ try { doc.addImage(insignia, 'PNG', 92, 4, 14, 14); } catch(e){} }
+
+    doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(0);
+    doc.text('REPUBLICA DE ANGOLA', 105, 22, {align: 'center'});
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    doc.text('MINISTERIO DA EDUCACAO', 105, 27, {align: 'center'});
+    doc.setDrawColor(204, 27, 43); doc.setLineWidth(0.4); doc.line(30, 30, 180, 30);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.text((esc.name || '').toUpperCase(), 105, 35, {align: 'center'});
+    doc.setDrawColor(212, 160, 23); doc.setLineWidth(0.2); doc.line(30, 37, 180, 37);
+
+    doc.setFontSize(13);
+    doc.text('PAUTA DO ' + d.trim + '. TRIMESTRE', 105, 44, {align: 'center'});
+
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    doc.text('Classe: ' + d.classe + ' | Turma: ' + d.turma + ' | Disciplina: ' + d.disc + ' | Notas: 0-' + d.mg + ' | Positiva: >=' + d.pg, 105, 50, {align: 'center'});
+
+    // Dados
+    var rows = [];
+    for(var i = 0; i < d.students.length; i++){
+        var s = d.students[i];
+        var mac = '', npt = '', mt = '', res = '';
+
+        try {
+            var gDoc = await db.collection('schools').doc(tid).collection('grades')
+                .doc(s.id + '_' + d.trim + '_' + d.dk).get();
+            if(gDoc.exists){
+                var gd = gDoc.data();
+                mac = gd.mac != null ? gd.mac : '';
+                npt = gd.npt != null ? gd.npt : '';
+                mt = gd.mt != null ? gd.mt : '';
+                if(mt !== '') res = mt >= d.pg ? 'Positiva' : 'Negativa';
+            }
+        } catch(e){}
+
+        rows.push([i + 1, s.name || '', s.sex === 'Feminino' ? 'F' : 'M', mac, npt, mt, res]);
+    }
+
+    doc.autoTable({
+        startY: 55,
+        head: [['N.', 'Nome', 'Sexo', 'MAC', 'NPT', 'MT', 'Resultado']],
+        body: rows,
+        styles: {fontSize: 8, cellPadding: 3, halign: 'center', lineColor: [200, 200, 200], lineWidth: 0.1},
+        headStyles: {fillColor: [245, 243, 240], textColor: [30, 30, 30], fontStyle: 'bold'},
+        columnStyles: {1: {halign: 'left', cellWidth: 55}},
+        alternateRowStyles: {fillColor: [252, 251, 249]},
+        margin: {left: 15, right: 15},
+        didParseCell: function(data2){
+            if(data2.section === 'body'){
+                if(data2.column.index === 5){
+                    var v = Number(data2.cell.raw);
+                    if(!isNaN(v)){
+                        data2.cell.styles.fontStyle = 'bold';
+                        data2.cell.styles.textColor = v >= d.pg ? [5, 130, 90] : [220, 38, 38];
+                    }
+                }
+                if(data2.column.index === 6){
+                    if(String(data2.cell.raw).indexOf('Pos') >= 0) data2.cell.styles.textColor = [5, 130, 90];
+                    if(String(data2.cell.raw).indexOf('Neg') >= 0) data2.cell.styles.textColor = [220, 38, 38];
+                }
+                if(data2.cell.raw === '') data2.cell.styles.textColor = [200, 200, 200];
+            }
+        }
+    });
+
+    var fy = doc.lastAutoTable.finalY + 8;
+    var pos = 0, neg = 0;
+    for(var r = 0; r < rows.length; r++){
+        if(rows[r][6] === 'Positiva') pos++;
+        if(rows[r][6] === 'Negativa') neg++;
+    }
+
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+    doc.text('Resumo: ' + pos + ' Positivas | ' + neg + ' Negativas | Total: ' + rows.length, 105, fy, {align: 'center'});
+
+    fy += 8;
+    doc.setFont('helvetica', 'normal');
+    doc.text('O(A) Professor(a):', 20, fy); doc.line(20, fy + 8, 85, fy + 8);
+    doc.text('O(A) Director(a):', 120, fy); doc.line(120, fy + 8, 185, fy + 8);
+
+    fy += 14;
+    doc.text((esc.municipality || 'Luanda') + ', ' + new Date().toLocaleDateString('pt-AO'), 105, fy, {align: 'center'});
+
+    try { await S.addQR(doc, 'SGE|PAUTA|' + d.classe + '|' + d.turma + '|' + d.disc, 168, fy - 10, 16); } catch(e){}
+
+    doc.save('Pauta_' + d.classe + '_' + d.turma + '_' + d.disc.replace(/\s+/g, '') + '_T' + d.trim + '.pdf');
+    S.toast('Pauta PDF gerada!', 'success');
+};
+
+// =============================================
+// PROFESSOR — EXPORTAR PAUTA XLSX
+// =============================================
+S._gpExportXLSX = async function(){
+    var d = S._gpCurrentData;
+    if(!d || !d.students){ S.toast('Carregue a pauta primeiro', 'warn'); return; }
+
+    var tid = S.tid();
+    var data = [];
+
+    for(var i = 0; i < d.students.length; i++){
+        var s = d.students[i];
+        var mac = '', npt = '', mt = '';
+
+        try {
+            var gDoc = await db.collection('schools').doc(tid).collection('grades')
+                .doc(s.id + '_' + d.trim + '_' + d.dk).get();
+            if(gDoc.exists){
+                var gd = gDoc.data();
+                mac = gd.mac != null ? gd.mac : '';
+                npt = gd.npt != null ? gd.npt : '';
+                mt = gd.mt != null ? gd.mt : '';
+            }
+        } catch(e){}
+
+        data.push({
+            'N.': i + 1,
+            'Nome': s.name || '',
+            'Sexo': s.sex === 'Feminino' ? 'F' : 'M',
+            'MAC': mac,
+            'NPT': npt,
+            'MT': mt,
+            'Resultado': mt !== '' ? (mt >= d.pg ? 'Positiva' : 'Negativa') : ''
+        });
+    }
+
+    var ws = XLSX.utils.json_to_sheet(data);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, d.classe + '_' + d.turma + '_T' + d.trim);
+    XLSX.writeFile(wb, 'Pauta_' + d.classe + '_' + d.turma + '_' + d.disc.replace(/\s+/g, '') + '_T' + d.trim + '.xlsx');
+    S.toast('XLSX exportado!', 'success');
+};
+
+console.log('Insignia configuravel + Pauta professor PDF/XLSX carregados');
+</script>
+<!-- ================================================
+     FIM INSIGNIA + PAUTA PROFESSOR
+     ================================================ -->
 </body>
 </html>
