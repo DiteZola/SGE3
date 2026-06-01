@@ -19845,5 +19845,484 @@ console.log('Insignia configuravel + Pauta professor PDF/XLSX carregados');
 <!-- ================================================
      FIM INSIGNIA + PAUTA PROFESSOR
      ================================================ -->
+<!-- ================================================
+     EXPORTAÇÕES + COORDENAÇÃO
+     ================================================ -->
+<script>
+// =============================================
+// 1. EXPORTAR PRESENÇAS PDF/XLSX
+// =============================================
+(function(){
+    var origAtt = S._routes['attendance'];
+    S._routes['attendance'] = function(){
+        if(S.hasRole('professor')){
+            S._pgAttendanceProfessor();
+        } else {
+            S._pgAttendanceDirectorFull();
+        }
+    };
+})();
+
+S._pgAttendanceDirectorFull = function(){
+    var pc = document.getElementById('pgC');
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Controlo de Presencas</h2><p class="tm fs-s">Registar e exportar presencas</p></div>'
+        + '<div style="display:flex;gap:5px;flex-wrap:wrap">'
+        + '<button class="btn btn-g btn-s" onclick="S._expAttPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>'
+        + '<button class="btn btn-o btn-s" onclick="S._expAttXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>'
+        + '</div></div>'
+        + '<div class="cd mb-l"><div class="g2 mb-m">'
+        + '<div class="fg"><label class="fl">Classe *</label><select id="at_cl" class="fs" onchange="S._atUpdateTurmas()">'
+        + '<option value="">--</option>'
+        + (S.school ? S.clsFor(S.school.type) : S.allCls()).map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('')
+        + '</select></div>'
+        + '<div class="fg"><label class="fl">Turma *</label><select id="at_tm" class="fs"><option value="">--</option></select></div>'
+        + '</div><div class="g2">'
+        + '<div class="fg"><label class="fl">Data *</label><input type="date" id="at_dt" class="fi" value="' + new Date().toISOString().split('T')[0] + '"></div>'
+        + '<div class="fg" style="display:flex;align-items:flex-end"><button class="btn btn-r" onclick="S._loadAttDir()" style="width:100%"><span class="material-icons-outlined">fact_check</span>Carregar</button></div>'
+        + '</div></div><div id="atArea"></div></div>';
+};
+
+S._expAttPDF = async function(){
+    var cl = document.getElementById('at_cl');
+    var tm = document.getElementById('at_tm');
+    var dt = document.getElementById('at_dt');
+    if(!cl || !cl.value || !tm || !tm.value || !dt || !dt.value){ S.toast('Preencha os filtros','error'); return; }
+
+    var tid = S.tid(); var esc = S.school || {};
+    var students = await S._getStudentsByClassTurma(tid, cl.value, tm.value);
+    if(!students.length){ S.toast('Sem alunos','warn'); return; }
+
+    var attMap = await S._getAttendance(tid, cl.value, tm.value, dt.value);
+    var insignia = null;
+    try { insignia = await S._getInsigniaForPDF(); } catch(e){}
+
+    var jsPDF2 = window.jspdf.jsPDF;
+    var doc = new jsPDF2('p','mm','a4');
+
+    if(insignia){ try{doc.addImage(insignia,'PNG',92,4,14,14)}catch(e){} }
+    doc.setFontSize(11);doc.setFont('helvetica','bold');doc.text('REPUBLICA DE ANGOLA',105,22,{align:'center'});
+    doc.setFontSize(9);doc.setFont('helvetica','normal');doc.text('MINISTERIO DA EDUCACAO',105,27,{align:'center'});
+    doc.setDrawColor(204,27,43);doc.setLineWidth(.4);doc.line(30,30,180,30);
+    doc.setFontSize(10);doc.setFont('helvetica','bold');doc.text((esc.name||'').toUpperCase(),105,35,{align:'center'});
+
+    doc.setFontSize(13);doc.text('MAPA DE PRESENCAS',105,44,{align:'center'});
+    doc.setFontSize(9);doc.setFont('helvetica','normal');
+    doc.text('Classe: ' + cl.value + ' | Turma: ' + tm.value + ' | Data: ' + dt.value, 105, 50, {align:'center'});
+
+    var rows = [];
+    var tP=0,tF=0,tJ=0,tA=0;
+    for(var i=0;i<students.length;i++){
+        var s = students[i];
+        var st = attMap[s.id] || 'P';
+        if(st==='P')tP++;else if(st==='F')tF++;else if(st==='J')tJ++;else tA++;
+        rows.push([i+1, s.name||'', s.sex==='Feminino'?'F':'M', st]);
+    }
+
+    doc.autoTable({startY:55, head:[['N.','Nome','Sexo','Presenca']], body:rows,
+        styles:{fontSize:8,cellPadding:3,halign:'center'},
+        headStyles:{fillColor:[245,243,240],textColor:[30,30,30],fontStyle:'bold'},
+        columnStyles:{1:{halign:'left',cellWidth:70}},
+        margin:{left:20,right:20},
+        didParseCell:function(d2){
+            if(d2.section==='body'&&d2.column.index===3){
+                var v=d2.cell.raw;
+                if(v==='P')d2.cell.styles.textColor=[5,130,90];
+                if(v==='F')d2.cell.styles.textColor=[220,38,38];
+                if(v==='J')d2.cell.styles.textColor=[37,99,235];
+                if(v==='A')d2.cell.styles.textColor=[245,158,11];
+                d2.cell.styles.fontStyle='bold';
+            }
+        }
+    });
+
+    var fy = doc.lastAutoTable.finalY + 6;
+    doc.setFontSize(8);doc.setFont('helvetica','bold');
+    doc.text('Resumo: P=' + tP + ' | F=' + tF + ' | J=' + tJ + ' | A=' + tA + ' | Total=' + students.length, 105, fy, {align:'center'});
+
+    doc.save('Presencas_' + cl.value + '_' + tm.value + '_' + dt.value + '.pdf');
+    S.toast('PDF gerado!','success');
+};
+
+S._expAttXLSX = async function(){
+    var cl=document.getElementById('at_cl'),tm=document.getElementById('at_tm'),dt=document.getElementById('at_dt');
+    if(!cl||!cl.value||!tm||!tm.value||!dt||!dt.value){S.toast('Preencha filtros','error');return}
+    var tid=S.tid();
+    var students=await S._getStudentsByClassTurma(tid,cl.value,tm.value);
+    var attMap=await S._getAttendance(tid,cl.value,tm.value,dt.value);
+    var data=[];
+    for(var i=0;i<students.length;i++){
+        var s=students[i];
+        data.push({'N.':i+1,Nome:s.name||'',Sexo:s.sex==='Feminino'?'F':'M',Presenca:attMap[s.id]||'P'});
+    }
+    var ws=XLSX.utils.json_to_sheet(data);var wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,'Presencas');
+    XLSX.writeFile(wb,'Presencas_'+cl.value+'_'+tm.value+'_'+dt.value+'.xlsx');
+    S.toast('XLSX exportado!','success');
+};
+
+// =============================================
+// 2. EXPORTAR ATRIBUIÇÕES PDF/XLSX
+// =============================================
+(function(){
+    var origAssign = S._routes['assignments'];
+    S._routes['assignments'] = function(){
+        if(!S.hasRole('diretor','subdiretor_pedagogico','super_admin')) return S.pgAccessDenied();
+        var pc = document.getElementById('pgC'), tid = S.tid();
+
+        pc.innerHTML = '<div class="fade">'
+            + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Atribuicoes</h2><p class="tm fs-s">Professor -> Classe -> Turma -> Disciplina</p></div>'
+            + '<div style="display:flex;gap:5px;flex-wrap:wrap">'
+            + '<button class="btn btn-g btn-s" onclick="S._expAssignPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>'
+            + '<button class="btn btn-o btn-s" onclick="S._expAssignXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>'
+            + '<button class="btn btn-r" onclick="S.mdAssign()"><span class="material-icons-outlined">add</span>Nova</button>'
+            + '</div></div>'
+            + '<div class="cd p0" style="overflow:hidden"><div style="padding:10px;border-bottom:1px solid #E5E7EB"><input type="text" class="fi" placeholder="Pesquisar..." oninput="S.filterTbl(\'asgTb\',this.value)"></div>'
+            + '<div class="ovx"><table class="tbl"><thead><tr><th>Professor</th><th>Classe</th><th>Turma</th><th>Disciplina</th><th>Horario</th><th class="tc">Accoes</th></tr></thead>'
+            + '<tbody id="asgTb"><tr><td colspan="6" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div></div></div>';
+
+        if(!tid) return;
+        var unsub = db.collection('schools').doc(tid).collection('assignments').onSnapshot(function(snap){
+            var tb = document.getElementById('asgTb'); if(!tb) return;
+            if(snap.empty){ tb.innerHTML = '<tr><td colspan="6" class="tc tm" style="padding:40px">Nenhuma</td></tr>'; return; }
+            var h = '';
+            snap.forEach(function(doc2){
+                var a = doc2.data();
+                h += '<tr><td class="fw7 fs-s">' + (a.professorName||'') + '</td><td class="fw7">' + (a.classe||'') + '</td><td><span class="bg bg-in">' + (a.turma||'') + '</span></td><td>' + (a.disciplina||'') + '</td><td class="fs-s tm">' + (a.horario||'--') + '</td>'
+                    + '<td class="tc"><button class="btn btn-gh btn-s" onclick="if(confirm(\'Remover?\'))db.collection(\'schools\').doc(\'' + tid + '\').collection(\'assignments\').doc(\'' + doc2.id + '\').delete().then(function(){S.toast(\'Removida\',\'success\')})"><span class="material-icons-outlined" style="font-size:.8rem;color:#DC2626">delete</span></button></td></tr>';
+            });
+            tb.innerHTML = h;
+            S._assignData = [];
+            snap.forEach(function(d2){ S._assignData.push(d2.data()); });
+        });
+        S._ls.push(unsub);
+    };
+})();
+
+S._expAssignPDF = async function(){
+    if(!S._assignData||!S._assignData.length){S.toast('Sem dados','warn');return}
+    var esc=S.school||{};var insignia=null;try{insignia=await S._getInsigniaForPDF()}catch(e){}
+    var jsPDF2=window.jspdf.jsPDF;var doc=new jsPDF2('p','mm','a4');
+    if(insignia){try{doc.addImage(insignia,'PNG',92,4,14,14)}catch(e){}}
+    doc.setFontSize(11);doc.setFont('helvetica','bold');doc.text('REPUBLICA DE ANGOLA',105,22,{align:'center'});
+    doc.setFontSize(10);doc.text((esc.name||'').toUpperCase(),105,30,{align:'center'});
+    doc.setFontSize(13);doc.text('MAPA DE ATRIBUICOES',105,40,{align:'center'});
+    var rows=[];
+    for(var i=0;i<S._assignData.length;i++){var a=S._assignData[i];rows.push([i+1,a.professorName||'',a.classe||'',a.turma||'',a.disciplina||'',a.horario||''])}
+    doc.autoTable({startY:46,head:[['N.','Professor','Classe','Turma','Disciplina','Horario']],body:rows,styles:{fontSize:8,cellPadding:3},headStyles:{fillColor:[245,243,240],textColor:[30,30,30],fontStyle:'bold'},margin:{left:15,right:15}});
+    doc.save('Atribuicoes.pdf');S.toast('PDF!','success');
+};
+
+S._expAssignXLSX = function(){
+    if(!S._assignData||!S._assignData.length){S.toast('Sem dados','warn');return}
+    var data=[];for(var i=0;i<S._assignData.length;i++){var a=S._assignData[i];data.push({'N.':i+1,Professor:a.professorName,Classe:a.classe,Turma:a.turma,Disciplina:a.disciplina,Horario:a.horario||''})}
+    var ws=XLSX.utils.json_to_sheet(data);var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Atribuicoes');
+    XLSX.writeFile(wb,'Atribuicoes.xlsx');S.toast('XLSX!','success');
+};
+
+// =============================================
+// 3. EXPORTAR EVENTOS PDF/XLSX
+// =============================================
+(function(){
+    var origEv = S._routes['events'];
+    if(!origEv) return;
+    var origPgEv = S.pgEvents;
+    S.pgEvents = function(){
+        origPgEv.call(this);
+        setTimeout(function(){
+            var hdr = document.querySelector('#pgC .fb');
+            if(hdr && !hdr.innerHTML.match('expEvPDF')){
+                var btns = hdr.querySelector('div:last-child') || hdr;
+                btns.insertAdjacentHTML('afterbegin',
+                    '<button class="btn btn-g btn-s" onclick="S._expEvPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>'
+                    + '<button class="btn btn-o btn-s" onclick="S._expEvXLSX()" id="expEvXL"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>');
+            }
+        }, 500);
+    };
+})();
+
+S._expEvPDF = async function(){
+    var tid=S.tid();var esc=S.school||{};
+    try{
+        var snap=await db.collection('schools').doc(tid).collection('events').orderBy('date','asc').get();
+        if(snap.empty){S.toast('Sem eventos','warn');return}
+        var rows=[];var n=0;
+        snap.forEach(function(d2){n++;var e=d2.data();rows.push([n,e.date||'',e.title||'',e.type||'',e.period||'',e.responsible||'',e.status==='concluido'?'Concluido':'Pendente'])});
+
+        var jsPDF2=window.jspdf.jsPDF;var doc=new jsPDF2('l','mm','a4');
+        doc.setFontSize(12);doc.setFont('helvetica','bold');doc.text('PLANO DE ACTIVIDADES',148,16,{align:'center'});
+        doc.setFontSize(9);doc.setFont('helvetica','normal');doc.text((esc.name||''),148,22,{align:'center'});
+        doc.autoTable({startY:28,head:[['N.','Data','Evento','Tipo','Periodo','Responsavel','Estado']],body:rows,styles:{fontSize:8,cellPadding:3},headStyles:{fillColor:[204,27,43],textColor:255},margin:{left:10,right:10}});
+        doc.save('Eventos_Actividades.pdf');S.toast('PDF!','success');
+    }catch(e){S.toast(e.message,'error')}
+};
+
+S._expEvXLSX = async function(){
+    var tid=S.tid();
+    try{
+        var snap=await db.collection('schools').doc(tid).collection('events').orderBy('date','asc').get();
+        if(snap.empty){S.toast('Sem eventos','warn');return}
+        var data=[];var n=0;
+        snap.forEach(function(d2){n++;var e=d2.data();data.push({'N.':n,Data:e.date,Evento:e.title,Tipo:e.type,Periodo:e.period,Responsavel:e.responsible,Local:e.local||'',Descricao:e.description||'',Estado:e.status})});
+        var ws=XLSX.utils.json_to_sheet(data);var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Eventos');
+        XLSX.writeFile(wb,'Eventos.xlsx');S.toast('XLSX!','success');
+    }catch(e){S.toast(e.message,'error')}
+};
+
+// =============================================
+// 4. MENU COORDENAÇÃO
+// =============================================
+(function(){
+    var origMenu = S.getMenu;
+    S.getMenu = function(role){
+        var m = origMenu.call(this, role);
+        if(role === 'diretor' || role === 'subdiretor_pedagogico'){
+            var idx = m.findIndex(function(i){ return i.p === 'assignments'; });
+            if(idx >= 0){
+                m.splice(idx + 1, 0, {s:'COORDENACAO',p:'coordination',i:'supervisor_account',l:'Coordenacao'});
+            } else {
+                m.push({s:'COORDENACAO',p:'coordination',i:'supervisor_account',l:'Coordenacao'});
+            }
+        }
+        if(role === 'professor'){
+            m.push({s:'COORDENACAO',p:'my-coordination',i:'supervisor_account',l:'Minha Coordenacao'});
+        }
+        return m;
+    };
+})();
+
+S._routes['coordination'] = function(){ S.pgCoordination(); };
+S._routes['my-coordination'] = function(){ S.pgMyCoordination(); };
+S._titles['coordination'] = 'Gestao de Coordenacao';
+S._titles['my-coordination'] = 'Minha Coordenacao';
+
+// =============================================
+// COORDENAÇÃO — Director/SubDir atribui
+// =============================================
+S.pgCoordination = async function(){
+    if(!this.hasRole('diretor','subdiretor_pedagogico','super_admin')) return this.pgAccessDenied();
+    var pc = document.getElementById('pgC');
+    var tid = this.tid();
+
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Gestao de Coordenacao</h2><p class="tm fs-s">Atribuir coordenacoes de turno, classe, turma e disciplina</p></div>'
+        + '<button class="btn btn-r" onclick="S._mdCoord()"><span class="material-icons-outlined">add</span>Nova Coordenacao</button></div>'
+        + '<div class="cd p0" style="overflow:hidden"><div style="padding:10px;border-bottom:1px solid #E5E7EB"><input type="text" class="fi" placeholder="Pesquisar..." oninput="S.filterTbl(\'coordTb\',this.value)"></div>'
+        + '<div class="ovx"><table class="tbl"><thead><tr><th>Professor</th><th>Tipo</th><th>Detalhe</th><th>Periodo</th><th>Estado</th><th class="tc">Accoes</th></tr></thead>'
+        + '<tbody id="coordTb"><tr><td colspan="6" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div></div></div>';
+
+    if(!tid) return;
+    var unsub = db.collection('schools').doc(tid).collection('coordinations').onSnapshot(function(snap){
+        var tb = document.getElementById('coordTb'); if(!tb) return;
+        if(snap.empty){ tb.innerHTML = '<tr><td colspan="6" class="tc tm" style="padding:40px">Nenhuma coordenacao</td></tr>'; return; }
+        var h = '';
+        snap.forEach(function(doc2){
+            var c = doc2.data();
+            var typeLabels = {'turno':'Coord. de Turno','classe':'Coord. de Classe','turma':'Coord. de Turma','disciplina':'Coord. de Disciplina','area':'Coord. de Area'};
+            h += '<tr><td class="fw7 fs-s">' + (c.professorName||'') + '</td>'
+                + '<td><span class="bg bg-in" style="font-size:.62rem">' + (typeLabels[c.type]||c.type||'') + '</span></td>'
+                + '<td class="fs-s">' + (c.detail||'') + '</td>'
+                + '<td class="fs-s">' + (c.period||'Anual') + '</td>'
+                + '<td><span class="bg ' + (c.active!==false?'bg-ok':'bg-er') + '">' + (c.active!==false?'Activa':'Inactiva') + '</span></td>'
+                + '<td class="tc"><div style="display:flex;gap:2px;justify-content:center">'
+                + '<button class="btn btn-gh btn-s" onclick="S._editCoord(\'' + doc2.id + '\')"><span class="material-icons-outlined" style="font-size:.8rem">edit</span></button>'
+                + '<button class="btn btn-gh btn-s" onclick="S._delCoord(\'' + doc2.id + '\')"><span class="material-icons-outlined" style="font-size:.8rem;color:#DC2626">delete</span></button>'
+                + '</div></td></tr>';
+        });
+        tb.innerHTML = h;
+    });
+    S._ls.push(unsub);
+};
+
+S._mdCoord = async function(edit){
+    var d = edit || {};
+    var tid = S.tid();
+
+    var profOpts = '<option value="">-- Seleccionar --</option>';
+    try{
+        var snap = await db.collection('users').where('tenantId','==',tid).get();
+        snap.forEach(function(doc2){
+            var u = doc2.data();
+            if(u.role === 'professor' && u.active !== false){
+                profOpts += '<option value="' + doc2.id + '" data-name="' + (u.name||'') + '"' + (d.professorId===doc2.id?' selected':'') + '>' + (u.name||'') + '</option>';
+            }
+        });
+    }catch(e){}
+
+    var classes = (S.school ? S.clsFor(S.school.type) : S.allCls());
+    var classOpts = classes.map(function(c){ return '<option value="' + c + '"' + (d.detail===c?' selected':'') + '>' + c + '</option>'; }).join('');
+
+    S.oModal(edit ? 'Editar Coordenacao' : 'Nova Coordenacao',
+        '<form onsubmit="return false"><div class="g2">'
+        + '<div class="fg gc2"><label class="fl">Professor *</label><select id="co_prof" class="fs" required>' + profOpts + '</select></div>'
+        + '<div class="fg"><label class="fl">Tipo de Coordenacao *</label><select id="co_type" class="fs" onchange="S._coTypeChange()" required>'
+        + '<option value="">--</option>'
+        + '<option value="turno"' + (d.type==='turno'?' selected':'') + '>Coordenador de Turno</option>'
+        + '<option value="classe"' + (d.type==='classe'?' selected':'') + '>Coordenador de Classe</option>'
+        + '<option value="turma"' + (d.type==='turma'?' selected':'') + '>Coordenador de Turma</option>'
+        + '<option value="disciplina"' + (d.type==='disciplina'?' selected':'') + '>Coordenador de Disciplina</option>'
+        + '<option value="area"' + (d.type==='area'?' selected':'') + '>Coordenador de Area</option>'
+        + '</select></div>'
+        + '<div class="fg" id="coDetailDiv"><label class="fl">Detalhe *</label><select id="co_detail" class="fs">'
+        + '<option value="">--</option>'
+        + '<option value="Manha"' + (d.detail==='Manha'?' selected':'') + '>Manha</option>'
+        + '<option value="Tarde"' + (d.detail==='Tarde'?' selected':'') + '>Tarde</option>'
+        + '<option value="Noite"' + (d.detail==='Noite'?' selected':'') + '>Noite</option>'
+        + classOpts
+        + '</select></div>'
+        + '<div class="fg"><label class="fl">Periodo</label><select id="co_period" class="fs"><option' + (d.period==='Anual'?' selected':'') + '>Anual</option><option' + (d.period==='1. Trimestre'?' selected':'') + '>1. Trimestre</option><option' + (d.period==='2. Trimestre'?' selected':'') + '>2. Trimestre</option><option' + (d.period==='3. Trimestre'?' selected':'') + '>3. Trimestre</option></select></div>'
+        + '<div class="fg gc2"><label class="fl">Actividades / Responsabilidades</label><textarea id="co_tasks" class="fi" rows="3">' + (d.tasks||'') + '</textarea></div>'
+        + '</div></form>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button><button class="btn btn-r" onclick="S._saveCoord(\'' + (d._id||'') + '\')"><span class="material-icons-outlined">save</span>' + (edit?'Actualizar':'Criar') + '</button>');
+};
+
+S._coTypeChange = function(){
+    // Pode ajustar opções do detalhe conforme tipo
+};
+
+S._saveCoord = async function(editId){
+    var profSel = document.getElementById('co_prof');
+    var type = document.getElementById('co_type');
+    var detail = document.getElementById('co_detail');
+    if(!profSel||!profSel.value||!type||!type.value||!detail||!detail.value){S.toast('Preencha tudo','error');return}
+
+    var profName = profSel.options[profSel.selectedIndex].dataset.name || '';
+    var tid = S.tid();
+
+    var data = {
+        professorId: profSel.value,
+        professorName: profName,
+        type: type.value,
+        detail: detail.value,
+        period: document.getElementById('co_period').value || 'Anual',
+        tasks: document.getElementById('co_tasks').value.trim() || '',
+        active: true,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    try {
+        if(editId){
+            await db.collection('schools').doc(tid).collection('coordinations').doc(editId).update(data);
+            S.toast('Actualizada!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            data.createdBy = S.user.uid;
+            await db.collection('schools').doc(tid).collection('coordinations').add(data);
+            S.toast('Coordenacao criada!','success');
+        }
+        S.cModal();
+    } catch(e){ S.toast(e.message,'error'); }
+};
+
+S._editCoord = async function(id){
+    try{var d=await db.collection('schools').doc(S.tid()).collection('coordinations').doc(id).get();
+    if(d.exists) S._mdCoord({_id:id, ...d.data()})}catch(e){S.toast(e.message,'error')}
+};
+
+S._delCoord = async function(id){
+    if(!confirm('Remover coordenacao?'))return;
+    try{await db.collection('schools').doc(S.tid()).collection('coordinations').doc(id).delete();S.toast('Removida','success')}catch(e){S.toast(e.message,'error')}
+};
+
+// =============================================
+// MINHA COORDENAÇÃO — Professor vê suas
+// =============================================
+S.pgMyCoordination = async function(){
+    if(!S.hasRole('professor')) return S.pgAccessDenied();
+    var pc = document.getElementById('pgC');
+    var tid = S.tid();
+
+    pc.innerHTML = '<div class="fade"><h2 class="fw8 fs-l mb-l">Minha Coordenacao</h2>'
+        + '<div id="myCoordArea"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div></div>';
+
+    try {
+        var snap = await db.collection('schools').doc(tid).collection('coordinations').get();
+        var myCoords = [];
+        snap.forEach(function(d2){
+            var c = d2.data();
+            if(c.professorId === S.user.uid && c.active !== false) myCoords.push({id:d2.id, ...c});
+        });
+
+        var el = document.getElementById('myCoordArea');
+        if(!el) return;
+
+        if(myCoords.length === 0){
+            el.innerHTML = '<div class="cd tc" style="padding:40px"><span class="material-icons-outlined" style="font-size:2.5rem;color:#D4A017">supervisor_account</span><h3 class="fw7 mt-m">Sem coordenacoes atribuidas</h3></div>';
+            return;
+        }
+
+        var typeLabels = {'turno':'Coordenador de Turno','classe':'Coordenador de Classe','turma':'Coordenador de Turma','disciplina':'Coordenador de Disciplina','area':'Coordenador de Area'};
+        var typeColors = {'turno':'#2563EB','classe':'#CC1B2B','turma':'#059669','disciplina':'#D4A017','area':'#7C3AED'};
+
+        var h = '<div class="g2">';
+        for(var i = 0; i < myCoords.length; i++){
+            var c = myCoords[i];
+            h += '<div class="cd" style="border-left:4px solid ' + (typeColors[c.type]||'#6B7280') + '">'
+                + '<div class="fb mb-m"><h3 class="fw7 fs-m">' + (typeLabels[c.type]||c.type) + '</h3>'
+                + '<span class="bg bg-in">' + (c.detail||'') + '</span></div>'
+                + '<p class="fs-s tm">Periodo: ' + (c.period||'Anual') + '</p>'
+                + (c.tasks ? '<div class="cd mt-s" style="padding:8px;background:rgba(212,160,23,.04)"><p class="fs-s fw7 tg mb-s">Actividades:</p><p class="fs-s">' + c.tasks + '</p></div>' : '')
+                + '<div style="display:flex;gap:5px;margin-top:10px">'
+                + '<button class="btn btn-r btn-s" onclick="S.nav(\'attendance\')"><span class="material-icons-outlined" style="font-size:.8rem">fact_check</span>Presencas</button>'
+                + '<button class="btn btn-g btn-s" onclick="S.nav(\'grades\')"><span class="material-icons-outlined" style="font-size:.8rem">grading</span>Notas</button>'
+                + '<button class="btn btn-o btn-s" onclick="S._coordReport(\'' + c.id + '\')"><span class="material-icons-outlined" style="font-size:.8rem">description</span>Relatorio</button>'
+                + '</div></div>';
+        }
+        h += '</div>';
+        el.innerHTML = h;
+
+    } catch(e){
+        document.getElementById('myCoordArea').innerHTML = '<p class="tr">' + e.message + '</p>';
+    }
+};
+
+S._coordReport = async function(coordId){
+    try{
+        var d = await db.collection('schools').doc(S.tid()).collection('coordinations').doc(coordId).get();
+        if(!d.exists) return;
+        var c = d.data();
+        var typeLabels={'turno':'Coordenador de Turno','classe':'Coordenador de Classe','turma':'Coordenador de Turma','disciplina':'Coordenador de Disciplina','area':'Coordenador de Area'};
+
+        S.oModal('Relatorio de Coordenacao',
+            '<div class="cd" style="padding:14px">'
+            + '<h3 class="fw7 fs-m mb-m">' + (typeLabels[c.type]||c.type) + ' -- ' + (c.detail||'') + '</h3>'
+            + '<p class="fs-s"><strong>Professor:</strong> ' + (c.professorName||'') + '</p>'
+            + '<p class="fs-s"><strong>Periodo:</strong> ' + (c.period||'Anual') + '</p>'
+            + (c.tasks ? '<p class="fs-s mt-s"><strong>Actividades:</strong> ' + c.tasks + '</p>' : '')
+            + '</div>'
+            + '<div class="fg mt-m"><label class="fl">Relatorio de Actividades Realizadas</label>'
+            + '<textarea id="coordRepText" class="fi" rows="6" placeholder="Descreva as actividades realizadas..."></textarea></div>',
+            '<button class="btn btn-o" onclick="S.cModal()">Fechar</button>'
+            + '<button class="btn btn-r" onclick="S._saveCoordReport(\'' + coordId + '\')"><span class="material-icons-outlined">save</span>Guardar Relatorio</button>');
+    }catch(e){S.toast(e.message,'error')}
+};
+
+S._saveCoordReport = async function(coordId){
+    var text = document.getElementById('coordRepText');
+    if(!text || !text.value.trim()){ S.toast('Escreva o relatorio','error'); return; }
+
+    try {
+        await db.collection('schools').doc(S.tid()).collection('coordinations').doc(coordId)
+            .collection('reports').add({
+                text: text.value.trim(),
+                date: new Date().toLocaleDateString('pt-AO'),
+                createdBy: S.user.uid,
+                createdByName: S.ud.name || '',
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        S.toast('Relatorio guardado!','success');
+        S.cModal();
+    } catch(e){ S.toast(e.message,'error'); }
+};
+
+console.log('Exportacoes + Coordenacao carregados');
+console.log('  Presencas: PDF + XLSX');
+console.log('  Atribuicoes: PDF + XLSX');
+console.log('  Eventos: PDF + XLSX');
+console.log('  Coordenacao: CRUD + Minha Coordenacao + Relatorios');
+</script>
+<!-- ================================================
+     FIM EXPORTACOES + COORDENACAO
+     ================================================ -->
 </body>
 </html>
