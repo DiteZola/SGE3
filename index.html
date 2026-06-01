@@ -20948,5 +20948,456 @@ console.log('Actividades coordenacao + Relatorios PDF carregados');
 <!-- ================================================
      FIM ACTIVIDADES + RELATORIOS
      ================================================ -->
+<!-- ================================================
+     ALTERAR DIRECTOR + ADMIN DISCIPLINAS
+     ================================================ -->
+<script>
+// =============================================
+// 1. ALTERAR DIRECTOR DE UMA ESCOLA
+// =============================================
+(function(){
+    var origViewSch = S.viewSch;
+    S.viewSch = async function(id){
+        await origViewSch.call(this, id);
+
+        if(!S.hasRole('super_admin')) return;
+
+        setTimeout(function(){
+            var ft = document.getElementById('mFt');
+            if(ft && !ft.innerHTML.match('Alterar Director')){
+                var btn = document.createElement('button');
+                btn.className = 'btn btn-r btn-s';
+                btn.innerHTML = '<span class="material-icons-outlined" style="font-size:.8rem">swap_horiz</span>Alterar Director';
+                btn.onclick = function(){ S.cModal(); S._mdChangeDirector(id); };
+                ft.insertBefore(btn, ft.firstChild);
+            }
+        }, 300);
+    };
+})();
+
+S._mdChangeDirector = async function(schoolId){
+    var tid = schoolId;
+
+    // Carregar escola
+    var schoolDoc = null;
+    try {
+        var sDoc = await db.collection('schools').doc(tid).get();
+        if(sDoc.exists) schoolDoc = sDoc.data();
+    } catch(e){}
+
+    if(!schoolDoc){ S.toast('Escola nao encontrada','error'); return; }
+
+    // Carregar directores existentes e potenciais
+    var currentDirector = schoolDoc.directorName || 'Nenhum';
+    var currentDirectorId = schoolDoc.directorId || '';
+
+    // Opção 1: Seleccionar utilizador existente
+    var userOpts = '<option value="">-- Seleccionar utilizador existente --</option>';
+    try {
+        var usSnap = await db.collection('users').get();
+        usSnap.forEach(function(d2){
+            var u = d2.data();
+            if(u.active !== false){
+                var selected = d2.id === currentDirectorId ? ' selected' : '';
+                userOpts += '<option value="' + d2.id + '" data-name="' + (u.name||'') + '" data-email="' + (u.email||'') + '"' + selected + '>'
+                    + (u.name||'') + ' (' + (S.RL[u.role]||u.role) + ')' + (u.tenantId === tid ? ' - Actual' : '') + '</option>';
+            }
+        });
+    } catch(e){}
+
+    S.oModal('Alterar Director da Escola',
+        '<div style="margin-bottom:12px">'
+        + '<p class="fw7">Escola: <span style="color:#D4A017">' + (schoolDoc.name||'') + '</span></p>'
+        + '<p class="fs-s tm">Director actual: <strong>' + currentDirector + '</strong></p>'
+        + '</div>'
+
+        + '<div class="cd mb-m" style="padding:10px;background:rgba(220,38,38,.04);border-color:rgba(220,38,38,.12)">'
+        + '<p class="fs-s"><span class="material-icons-outlined" style="font-size:.85rem;vertical-align:middle;color:#DC2626;margin-right:3px">warning</span>'
+        + 'Ao alterar o director, o nome nos documentos oficiais sera actualizado automaticamente.</p>'
+        + '</div>'
+
+        // Opção 1: Utilizador existente
+        + '<div class="fg"><label class="fl">Opcao 1: Seleccionar Utilizador Existente</label>'
+        + '<select id="cd_user" class="fs" onchange="S._cdUserSelected()">' + userOpts + '</select></div>'
+
+        + '<div style="text-align:center;padding:8px;color:#9CA3AF;font-size:.78rem">-- OU --</div>'
+
+        // Opção 2: Criar novo
+        + '<div class="cd" style="padding:12px;border-color:rgba(212,160,23,.2)">'
+        + '<p class="fw7 fs-s tg mb-m">Opcao 2: Criar Novo Director</p>'
+        + '<div class="g2">'
+        + '<div class="fg gc2"><label class="fl">Nome Completo</label><input type="text" id="cd_name" class="fi"></div>'
+        + '<div class="fg"><label class="fl">Email (para login)</label><input type="email" id="cd_email" class="fi"></div>'
+        + '<div class="fg"><label class="fl">Telefone</label><input type="tel" id="cd_phone" class="fi"></div>'
+        + '<div class="fg"><label class="fl">Palavra-passe (min. 8)</label><input type="password" id="cd_pass" class="fi"></div>'
+        + '<div class="fg"><label class="fl">Confirmar</label><input type="password" id="cd_pass2" class="fi"></div>'
+        + '</div></div>',
+
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._saveChangeDirector(\'' + schoolId + '\')" id="cdSaveBtn">'
+        + '<span class="material-icons-outlined">swap_horiz</span>Alterar Director</button>');
+};
+
+S._cdUserSelected = function(){
+    var sel = document.getElementById('cd_user');
+    if(sel && sel.value){
+        document.getElementById('cd_name').value = '';
+        document.getElementById('cd_email').value = '';
+        document.getElementById('cd_phone').value = '';
+        document.getElementById('cd_pass').value = '';
+        document.getElementById('cd_pass2').value = '';
+    }
+};
+
+S._saveChangeDirector = async function(schoolId){
+    var userSel = document.getElementById('cd_user');
+    var newName = document.getElementById('cd_name').value.trim();
+    var newEmail = document.getElementById('cd_email').value.trim();
+    var newPass = document.getElementById('cd_pass').value;
+    var newPass2 = document.getElementById('cd_pass2').value;
+    var newPhone = document.getElementById('cd_phone').value.trim();
+
+    var btn = document.getElementById('cdSaveBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Processando...'; }
+
+    try {
+        if(userSel && userSel.value){
+            // OPÇÃO 1: Utilizador existente
+            var selectedOpt = userSel.options[userSel.selectedIndex];
+            var userName = selectedOpt.dataset.name || '';
+            var userId = userSel.value;
+
+            // Desactivar director anterior
+            var schoolDoc = await db.collection('schools').doc(schoolId).get();
+            if(schoolDoc.exists && schoolDoc.data().directorId){
+                var oldDirId = schoolDoc.data().directorId;
+                if(oldDirId !== userId){
+                    try {
+                        await db.collection('users').doc(oldDirId).update({
+                            role: 'professor',
+                            tenantId: schoolId
+                        });
+                    } catch(e){}
+                }
+            }
+
+            // Actualizar utilizador como director
+            await db.collection('users').doc(userId).update({
+                role: 'diretor',
+                tenantId: schoolId,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+
+            // Actualizar escola
+            await db.collection('schools').doc(schoolId).update({
+                directorId: userId,
+                directorName: userName,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+
+            S.log('schools', 'Director alterado: ' + userName + ' para escola ' + schoolId);
+            S.toast('Director alterado para ' + userName + '!', 'success');
+            S.cModal();
+
+        } else if(newName && newEmail && newPass){
+            // OPÇÃO 2: Criar novo
+            if(newPass.length < 8){ S.toast('Senha minimo 8 caracteres','error'); if(btn){btn.disabled=false;btn.textContent='Alterar';} return; }
+            if(newPass !== newPass2){ S.toast('Senhas nao coincidem','error'); if(btn){btn.disabled=false;btn.textContent='Alterar';} return; }
+
+            // Desactivar director anterior
+            var schoolDoc2 = await db.collection('schools').doc(schoolId).get();
+            if(schoolDoc2.exists && schoolDoc2.data().directorId){
+                try {
+                    await db.collection('users').doc(schoolDoc2.data().directorId).update({
+                        role: 'professor',
+                        tenantId: schoolId
+                    });
+                } catch(e){}
+            }
+
+            // Criar conta
+            var cred = await auth.createUserWithEmailAndPassword(newEmail, newPass);
+            var uid = cred.user.uid;
+
+            await db.collection('users').doc(uid).set({
+                uid: uid,
+                name: newName,
+                email: newEmail,
+                phone: newPhone,
+                role: 'diretor',
+                tenantId: schoolId,
+                active: true,
+                photo: null,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdBy: S.user ? S.user.uid : 'system'
+            });
+
+            await db.collection('schools').doc(schoolId).update({
+                directorId: uid,
+                directorName: newName,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+
+            S.log('schools', 'Novo director criado: ' + newName);
+            S.toast('Novo director ' + newName + ' criado! Faca login novamente.', 'success');
+            S.cModal();
+
+        } else {
+            S.toast('Seleccione um utilizador ou preencha os dados do novo director', 'error');
+            if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">swap_horiz</span>Alterar Director'; }
+        }
+
+    } catch(e){
+        if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">swap_horiz</span>Alterar Director'; }
+        var msgs = {'auth/email-already-in-use':'Email ja em uso'};
+        S.toast(msgs[e.code] || e.message, 'error');
+    }
+};
+
+// =============================================
+// 2. ADMIN GERAL — GESTÃO DE DISCIPLINAS
+// =============================================
+(function(){
+    var origDiscRoute = S._routes['disciplines'];
+    S._routes['disciplines'] = function(){
+        if(S.hasRole('super_admin')){
+            S._pgDisciplinesAdmin();
+        } else {
+            if(typeof origDiscRoute === 'function') origDiscRoute.call(S);
+            else S.pgDisciplines();
+        }
+    };
+})();
+
+S._pgDisciplinesAdmin = function(){
+    var pc = document.getElementById('pgC');
+    var allClasses = S.allCls();
+
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Gestao de Disciplinas</h2>'
+        + '<p class="tm fs-s">Adicionar ou remover disciplinas em qualquer classe (Admin Geral)</p></div>'
+        + '<button class="btn btn-r" onclick="S._mdAdminAddDisc()"><span class="material-icons-outlined">add</span>Adicionar Disciplina</button></div>'
+
+        + '<div class="cd mb-m" style="padding:10px;background:rgba(37,99,235,.04);border-color:rgba(37,99,235,.12)">'
+        + '<p class="fs-s"><span class="material-icons-outlined" style="font-size:.85rem;vertical-align:middle;color:#2563EB;margin-right:3px">info</span>'
+        + 'Como Administrador Geral, pode adicionar ou remover disciplinas em qualquer classe. As alteracoes afectam todas as escolas do sistema.</p></div>'
+
+        + '<div class="cd mb-m"><div class="fg"><label class="fl">Filtrar por Classe</label>'
+        + '<select id="adDiscFilter" class="fs" onchange="S._renderAdminDiscs(this.value)">'
+        + '<option value="">-- Todas --</option>'
+        + allClasses.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('')
+        + '</select></div></div>'
+
+        + '<div id="adDiscArea"></div></div>';
+
+    S._renderAdminDiscs('');
+};
+
+S._renderAdminDiscs = function(filterClass){
+    var area = document.getElementById('adDiscArea');
+    if(!area) return;
+
+    var classesToShow = filterClass ? [filterClass] : S.allCls();
+
+    var h = '';
+    for(var ci = 0; ci < classesToShow.length; ci++){
+        var classe = classesToShow[ci];
+        var discs = S.DISC[classe] || [];
+        var mg = S.maxG(classe);
+        var isPri = S.isPri(classe);
+        var nivel = isPri ? 'Primario' : (parseInt(classe) >= 7 && parseInt(classe) <= 9 ? 'I Ciclo' : 'II Ciclo');
+
+        h += '<div class="cd mb-m">'
+            + '<div class="fb mb-m"><div><h3 class="fw7 fs-m">' + classe + '</h3>'
+            + '<div style="display:flex;gap:5px;margin-top:3px">'
+            + '<span class="bg bg-in">' + nivel + '</span>'
+            + '<span class="bg bg-wr">0-' + mg + '</span>'
+            + '<span class="bg bg-ok">' + discs.length + ' disc.</span>'
+            + '</div></div>'
+            + '<button class="btn btn-r btn-s" onclick="S._mdAdminAddDiscToClass(\'' + classe + '\')">'
+            + '<span class="material-icons-outlined" style="font-size:.8rem">add</span>Adicionar</button>'
+            + '</div>'
+            + '<div class="ovx"><table class="tbl"><thead><tr><th>N.</th><th>Disciplina</th><th class="tc">Accoes</th></tr></thead><tbody>';
+
+        for(var di = 0; di < discs.length; di++){
+            h += '<tr><td>' + (di+1) + '</td><td class="fw7 fs-s">' + discs[di] + '</td>'
+                + '<td class="tc"><button class="btn btn-gh btn-s" onclick="S._adminRemoveDisc(\'' + classe + '\',\'' + discs[di].replace(/'/g,"\\'") + '\')" title="Remover"><span class="material-icons-outlined" style="font-size:.8rem;color:#DC2626">delete</span></button></td></tr>';
+        }
+
+        h += '</tbody></table></div></div>';
+    }
+
+    area.innerHTML = h;
+};
+
+// Modal adicionar disciplina a uma classe
+S._mdAdminAddDiscToClass = function(classe){
+    S.oModal('Adicionar Disciplina a ' + classe,
+        '<form onsubmit="return false">'
+        + '<div class="fg"><label class="fl">Nome da Disciplina *</label>'
+        + '<input type="text" id="adDisc_name" class="fi" placeholder="Ex: Empreendedorismo" required></div>'
+        + '</form>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._adminAddDiscSave(\'' + classe + '\')">'
+        + '<span class="material-icons-outlined">save</span>Adicionar</button>', '420px');
+};
+
+// Modal adicionar a qualquer classe
+S._mdAdminAddDisc = function(){
+    var allClasses = S.allCls();
+    var clOpts = allClasses.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('');
+
+    S.oModal('Adicionar Disciplina',
+        '<form onsubmit="return false"><div class="g2">'
+        + '<div class="fg"><label class="fl">Classe *</label><select id="adDisc_cl" class="fs" required>' + clOpts + '</select></div>'
+        + '<div class="fg"><label class="fl">Disciplina *</label><input type="text" id="adDisc_name2" class="fi" required></div>'
+        + '</div></form>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._adminAddDiscSave2()">'
+        + '<span class="material-icons-outlined">save</span>Adicionar</button>', '460px');
+};
+
+S._adminAddDiscSave = function(classe){
+    var name = document.getElementById('adDisc_name');
+    if(!name || !name.value.trim()){ S.toast('Nome obrigatorio','error'); return; }
+
+    var discName = name.value.trim();
+
+    if(!S.DISC[classe]) S.DISC[classe] = [];
+
+    if(S.DISC[classe].indexOf(discName) >= 0){
+        S.toast('Disciplina ja existe nesta classe','warn');
+        return;
+    }
+
+    S.DISC[classe].push(discName);
+    S.toast(discName + ' adicionada a ' + classe + '!', 'success');
+    S.cModal();
+
+    // Guardar no Firestore para persistir
+    S._adminSaveDiscChange(classe, discName, 'add');
+
+    var filter = document.getElementById('adDiscFilter');
+    S._renderAdminDiscs(filter ? filter.value : '');
+};
+
+S._adminAddDiscSave2 = function(){
+    var cl = document.getElementById('adDisc_cl');
+    var name = document.getElementById('adDisc_name2');
+    if(!cl || !cl.value || !name || !name.value.trim()){ S.toast('Preencha tudo','error'); return; }
+
+    var classe = cl.value;
+    var discName = name.value.trim();
+
+    if(!S.DISC[classe]) S.DISC[classe] = [];
+
+    if(S.DISC[classe].indexOf(discName) >= 0){
+        S.toast('Ja existe','warn');
+        return;
+    }
+
+    S.DISC[classe].push(discName);
+    S.toast(discName + ' adicionada a ' + classe + '!', 'success');
+    S.cModal();
+
+    S._adminSaveDiscChange(classe, discName, 'add');
+
+    var filter = document.getElementById('adDiscFilter');
+    S._renderAdminDiscs(filter ? filter.value : '');
+};
+
+S._adminRemoveDisc = function(classe, discName){
+    if(!confirm('Remover "' + discName + '" da ' + classe + '?\n\nIsto afecta todas as escolas!')) return;
+
+    if(S.DISC[classe]){
+        S.DISC[classe] = S.DISC[classe].filter(function(d){ return d !== discName; });
+    }
+
+    S.toast(discName + ' removida de ' + classe, 'success');
+
+    S._adminSaveDiscChange(classe, discName, 'remove');
+
+    var filter = document.getElementById('adDiscFilter');
+    S._renderAdminDiscs(filter ? filter.value : '');
+};
+
+// Persistir alterações no Firestore
+S._adminSaveDiscChange = async function(classe, discName, action){
+    try {
+        if(action === 'add'){
+            await db.collection('system').collection('disciplineChanges').add({
+                classe: classe,
+                discipline: discName,
+                action: 'add',
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdBy: S.user ? S.user.uid : 'system'
+            });
+        } else {
+            await db.collection('system').collection('disciplineChanges').add({
+                classe: classe,
+                discipline: discName,
+                action: 'remove',
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                createdBy: S.user ? S.user.uid : 'system'
+            });
+        }
+    } catch(e){
+        // Fallback: guardar no doc system/config
+        try {
+            var configDoc = await db.collection('system').doc('config').get();
+            var discChanges = configDoc.exists && configDoc.data().discChanges ? configDoc.data().discChanges : [];
+
+            discChanges.push({
+                classe: classe,
+                discipline: discName,
+                action: action,
+                date: new Date().toISOString()
+            });
+
+            await db.collection('system').doc('config').update({
+                discChanges: discChanges,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        } catch(e2){}
+    }
+
+    S.log('disciplines', action === 'add' ? 'Disciplina adicionada: ' + discName + ' em ' + classe : 'Disciplina removida: ' + discName + ' de ' + classe);
+};
+
+// Carregar alterações de disciplinas ao iniciar
+(function(){
+    var origShowApp = S.showApp;
+    S.showApp = async function(){
+        await origShowApp.call(this);
+
+        // Carregar alterações de disciplinas do sistema
+        try {
+            var cfgDoc = await db.collection('system').doc('config').get();
+            if(cfgDoc.exists && cfgDoc.data().discChanges){
+                var changes = cfgDoc.data().discChanges;
+                for(var i = 0; i < changes.length; i++){
+                    var ch = changes[i];
+                    if(!S.DISC[ch.classe]) S.DISC[ch.classe] = [];
+
+                    if(ch.action === 'add'){
+                        if(S.DISC[ch.classe].indexOf(ch.discipline) < 0){
+                            S.DISC[ch.classe].push(ch.discipline);
+                        }
+                    } else if(ch.action === 'remove'){
+                        S.DISC[ch.classe] = S.DISC[ch.classe].filter(function(d){ return d !== ch.discipline; });
+                    }
+                }
+            }
+        } catch(e){}
+    };
+})();
+
+console.log('Alterar director + Admin disciplinas carregados');
+console.log('  Director: pode ser alterado pelo admin (existente ou novo)');
+console.log('  Disciplinas: admin pode adicionar/remover em qualquer classe');
+</script>
+<!-- ================================================
+     FIM ALTERAR DIRECTOR + DISCIPLINAS
+     ================================================ -->
 </body>
 </html>
