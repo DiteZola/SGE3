@@ -23606,6 +23606,1048 @@ console.log('  Director edita perfil -> actualiza nome e sexo na escola');
 <!-- ================================================
      FIM CORREÇÃO BUGS
      ================================================ -->
+<!-- ================================================
+     PRESENÇAS — RELATÓRIO COMPLETO
+     ================================================ -->
+<script>
+// =============================================
+// REESCREVER PÁGINA DE PRESENÇAS
+// =============================================
+S._pgAttendanceDirectorFull = function(){
+    var pc = document.getElementById('pgC');
+    var classes = S.school ? S.clsFor(S.school.type) : S.allCls();
 
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Controlo de Presencas</h2>'
+        + '<p class="tm fs-s">Registar presencas e gerar relatorios</p></div>'
+        + '<div style="display:flex;gap:5px;flex-wrap:wrap">'
+        + '<button class="btn btn-g btn-s" onclick="S._attReportModal()"><span class="material-icons-outlined" style="font-size:.85rem">assessment</span>Relatorio</button>'
+        + '</div></div>'
+
+        // Registo diário
+        + '<div class="cd mb-l">'
+        + '<h3 class="fw7 fs-m mb-m">Registo Diario</h3>'
+        + '<div class="g2 mb-m">'
+        + '<div class="fg"><label class="fl">Classe *</label><select id="at_cl" class="fs" onchange="S._atUpdateTurmas()">'
+        + '<option value="">--</option>'
+        + classes.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('')
+        + '</select></div>'
+        + '<div class="fg"><label class="fl">Turma *</label><select id="at_tm" class="fs"><option value="">--</option></select></div>'
+        + '</div>'
+        + '<div class="g2">'
+        + '<div class="fg"><label class="fl">Data *</label><input type="date" id="at_dt" class="fi" value="' + new Date().toISOString().split('T')[0] + '"></div>'
+        + '<div class="fg" style="display:flex;align-items:flex-end"><button class="btn btn-r" onclick="S._loadAttDir()" style="width:100%"><span class="material-icons-outlined">fact_check</span>Carregar</button></div>'
+        + '</div></div>'
+        + '<div id="atArea"></div></div>';
+};
+
+// =============================================
+// MODAL RELATÓRIO DE PRESENÇAS
+// =============================================
+S._attReportModal = function(){
+    var classes = S.school ? S.clsFor(S.school.type) : S.allCls();
+
+    S.oModal('Relatorio de Presencas',
+        '<form onsubmit="return false"><div class="g2">'
+        + '<div class="fg"><label class="fl">Classe *</label><select id="atr_cl" class="fs" onchange="S._atrLoadTurmas()">'
+        + '<option value="">-- Seleccionar --</option>'
+        + classes.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('')
+        + '</select></div>'
+        + '<div class="fg"><label class="fl">Turma *</label><select id="atr_tm" class="fs"><option value="">--</option></select></div>'
+        + '<div class="fg"><label class="fl">Data Inicio *</label><input type="date" id="atr_di" class="fi"></div>'
+        + '<div class="fg"><label class="fl">Data Fim *</label><input type="date" id="atr_df" class="fi" value="' + new Date().toISOString().split('T')[0] + '"></div>'
+        + '<div class="fg gc2"><label class="fl">Periodo (opcional)</label><select id="atr_per" class="fs" onchange="S._atrSetDates()">'
+        + '<option value="">Personalizado</option>'
+        + '<option value="1t">1. Trimestre</option>'
+        + '<option value="2t">2. Trimestre</option>'
+        + '<option value="3t">3. Trimestre</option>'
+        + '<option value="anual">Anual</option>'
+        + '</select></div>'
+        + '</div></form>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-g btn-s" onclick="S._genAttReportPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>'
+        + '<button class="btn btn-o btn-s" onclick="S._genAttReportXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>'
+        + '<button class="btn btn-r" onclick="S._genAttReport()"><span class="material-icons-outlined">visibility</span>Ver</button>',
+        '550px');
+};
+
+S._atrLoadTurmas = async function(){
+    var cl = document.getElementById('atr_cl');
+    var tm = document.getElementById('atr_tm');
+    if(!cl || !tm) return;
+    tm.innerHTML = '<option value="">--</option>';
+    if(!cl.value) return;
+
+    var turmas = await S._getTurmasByClass(S.tid(), cl.value);
+    for(var i = 0; i < turmas.length; i++){
+        if(turmas[i].active !== false){
+            tm.innerHTML += '<option value="' + turmas[i].turma + '">' + turmas[i].turma + '</option>';
+        }
+    }
+
+    if(turmas.length === 0){
+        var studs = await S._getStudentsByClass(S.tid(), cl.value);
+        var unique = {};
+        for(var j = 0; j < studs.length; j++){
+            if(studs[j].turma && !unique[studs[j].turma]){
+                unique[studs[j].turma] = true;
+                tm.innerHTML += '<option value="' + studs[j].turma + '">' + studs[j].turma + '</option>';
+            }
+        }
+    }
+};
+
+S._atrSetDates = function(){
+    var per = document.getElementById('atr_per');
+    var di = document.getElementById('atr_di');
+    var df = document.getElementById('atr_df');
+    if(!per || !di || !df) return;
+
+    var yr = new Date().getFullYear();
+    switch(per.value){
+        case '1t': di.value = yr + '-02-01'; df.value = yr + '-05-31'; break;
+        case '2t': di.value = yr + '-06-01'; df.value = yr + '-09-30'; break;
+        case '3t': di.value = yr + '-10-01'; df.value = yr + '-12-31'; break;
+        case 'anual': di.value = yr + '-01-01'; df.value = yr + '-12-31'; break;
+    }
+};
+
+// =============================================
+// GERAR RELATÓRIO (visualizar no modal)
+// =============================================
+S._genAttReport = async function(){
+    var cl = document.getElementById('atr_cl');
+    var tm = document.getElementById('atr_tm');
+    var di = document.getElementById('atr_di');
+    var df = document.getElementById('atr_df');
+
+    if(!cl || !cl.value || !tm || !tm.value || !di || !di.value || !df || !df.value){
+        S.toast('Preencha todos os campos', 'error'); return;
+    }
+
+    S.cModal();
+    S.toast('Gerando relatorio...', 'info', 2000);
+
+    var data = await S._buildAttReportData(cl.value, tm.value, di.value, df.value);
+
+    // Mostrar resultado
+    var h = '<div class="fade"><div class="cd mb-m">'
+        + '<div class="fb fw gm mb-m"><div>'
+        + '<h3 class="fw7 fs-m">Relatorio de Presencas</h3>'
+        + '<p class="tm fs-s">' + cl.value + ' - Turma ' + tm.value + ' | ' + di.value + ' a ' + df.value + '</p></div>'
+        + '<div style="display:flex;gap:4px">'
+        + '<button class="btn btn-g btn-s" onclick="S._attReportModal()"><span class="material-icons-outlined" style="font-size:.8rem">refresh</span>Novo</button>'
+        + '</div></div>'
+
+        // Stats
+        + '<div class="g4 mb-m">'
+        + '<div class="stc" style="border-left:3px solid #059669"><div><div class="st-v" style="color:#059669">' + data.totalPresencas + '</div><div class="st-l">Presencas</div></div></div>'
+        + '<div class="stc" style="border-left:3px solid #DC2626"><div><div class="st-v" style="color:#DC2626">' + data.totalFaltasNJ + '</div><div class="st-l">Faltas</div></div></div>'
+        + '<div class="stc" style="border-left:3px solid #2563EB"><div><div class="st-v" style="color:#2563EB">' + data.totalFaltasJ + '</div><div class="st-l">Justificadas</div></div></div>'
+        + '<div class="stc" style="border-left:3px solid #F59E0B"><div><div class="st-v" style="color:#F59E0B">' + data.totalAtrasos + '</div><div class="st-l">Atrasos</div></div></div>'
+        + '</div>'
+
+        // Tabela
+        + '<div class="ovx"><table class="tbl"><thead><tr>'
+        + '<th>N.</th><th>Nome Completo</th><th>Genero</th>'
+        + '<th class="tc">Total Aulas</th>'
+        + '<th class="tc">Presencas</th>'
+        + '<th class="tc">Faltas</th>'
+        + '<th class="tc">Justif.</th>'
+        + '<th class="tc">Atrasos</th>'
+        + '<th class="tc">Total Faltas</th>'
+        + '<th class="tc">% Assid.</th>'
+        + '<th>Observacao</th>'
+        + '</tr></thead><tbody>';
+
+    for(var i = 0; i < data.rows.length; i++){
+        var r = data.rows[i];
+        var pctColor = r.pctAssid >= 75 ? '#059669' : r.pctAssid >= 50 ? '#F59E0B' : '#DC2626';
+
+        h += '<tr>'
+            + '<td class="fw7">' + (i+1) + '</td>'
+            + '<td class="fw7 fs-s">' + r.name + '</td>'
+            + '<td class="tc">' + r.genero + '</td>'
+            + '<td class="tc">' + r.totalAulas + '</td>'
+            + '<td class="tc fw7" style="color:#059669">' + r.presencas + '</td>'
+            + '<td class="tc fw7" style="color:#DC2626">' + r.faltasNJ + '</td>'
+            + '<td class="tc" style="color:#2563EB">' + r.faltasJ + '</td>'
+            + '<td class="tc" style="color:#F59E0B">' + r.atrasos + '</td>'
+            + '<td class="tc fw7" style="color:#DC2626">' + r.totalFaltas + '</td>'
+            + '<td class="tc fw8" style="color:' + pctColor + '">' + r.pctAssid + '%</td>'
+            + '<td class="fs-s">' + r.obs + '</td>'
+            + '</tr>';
+    }
+
+    h += '</tbody></table></div></div></div>';
+
+    document.getElementById('pgC').innerHTML = h;
+};
+
+// =============================================
+// CONSTRUIR DADOS DO RELATÓRIO
+// =============================================
+S._buildAttReportData = async function(classe, turma, dateStart, dateEnd){
+    var tid = S.tid();
+    var students = await S._getStudentsByClassTurma(tid, classe, turma);
+
+    // Carregar TODAS as presenças no período
+    var allAtt = {};
+    try {
+        var snap = await db.collection('schools').doc(tid).collection('attendance').get();
+        snap.forEach(function(d2){
+            var a = d2.data();
+            if(a.classe === classe && a.turma === turma){
+                if(a.date >= dateStart && a.date <= dateEnd){
+                    if(!allAtt[a.studentId]) allAtt[a.studentId] = [];
+                    allAtt[a.studentId].push(a.status);
+                }
+            }
+        });
+    } catch(e){}
+
+    // Calcular total de dias com aulas
+    var allDates = {};
+    try {
+        var snap2 = await db.collection('schools').doc(tid).collection('attendance').get();
+        snap2.forEach(function(d2){
+            var a = d2.data();
+            if(a.classe === classe && a.turma === turma && a.date >= dateStart && a.date <= dateEnd){
+                allDates[a.date] = true;
+            }
+        });
+    } catch(e){}
+    var totalDias = Object.keys(allDates).length;
+
+    var rows = [];
+    var tP = 0, tFNJ = 0, tFJ = 0, tA = 0;
+
+    for(var i = 0; i < students.length; i++){
+        var s = students[i];
+        var att = allAtt[s.id] || [];
+
+        var presencas = 0, faltasNJ = 0, faltasJ = 0, atrasos = 0;
+        for(var j = 0; j < att.length; j++){
+            if(att[j] === 'P') presencas++;
+            else if(att[j] === 'F') faltasNJ++;
+            else if(att[j] === 'J') faltasJ++;
+            else if(att[j] === 'A') atrasos++;
+        }
+
+        var totalFaltas = faltasNJ + faltasJ;
+        var totalAulas = presencas + faltasNJ + faltasJ + atrasos;
+        if(totalAulas === 0) totalAulas = totalDias;
+        var pctAssid = totalAulas > 0 ? Math.round(presencas / totalAulas * 100) : 0;
+
+        // Observação automática
+        var obs = '';
+        if(pctAssid >= 90) obs = 'Excelente';
+        else if(pctAssid >= 75) obs = 'Bom';
+        else if(pctAssid >= 50) obs = 'Regular';
+        else if(pctAssid >= 25) obs = 'Critico';
+        else if(totalAulas > 0) obs = 'Muito critico';
+        else obs = 'Sem registos';
+
+        if(s.status === 'Transferido' || s.status === 'Transferida') obs = 'Transferido';
+        if(s.status === 'Desistente') obs = 'Desistente';
+
+        tP += presencas; tFNJ += faltasNJ; tFJ += faltasJ; tA += atrasos;
+
+        rows.push({
+            name: s.name || '',
+            genero: s.sex === 'Feminino' ? 'F' : 'M',
+            totalAulas: totalAulas,
+            presencas: presencas,
+            faltasNJ: faltasNJ,
+            faltasJ: faltasJ,
+            atrasos: atrasos,
+            totalFaltas: totalFaltas,
+            pctAssid: pctAssid,
+            obs: obs
+        });
+    }
+
+    return {
+        rows: rows,
+        totalPresencas: tP,
+        totalFaltasNJ: tFNJ,
+        totalFaltasJ: tFJ,
+        totalAtrasos: tA,
+        totalDias: totalDias,
+        classe: classe,
+        turma: turma,
+        dateStart: dateStart,
+        dateEnd: dateEnd
+    };
+};
+
+// =============================================
+// RELATÓRIO PDF
+// =============================================
+S._genAttReportPDF = async function(){
+    var cl = document.getElementById('atr_cl');
+    var tm = document.getElementById('atr_tm');
+    var di = document.getElementById('atr_di');
+    var df = document.getElementById('atr_df');
+    var per = document.getElementById('atr_per');
+
+    if(!cl || !cl.value || !tm || !tm.value || !di || !di.value || !df || !df.value){
+        S.toast('Preencha tudo', 'error'); return;
+    }
+
+    S.toast('Gerando PDF...', 'info', 2000);
+
+    var data = await S._buildAttReportData(cl.value, tm.value, di.value, df.value);
+    var esc = S.school || {};
+    var insignia = null;
+    try { insignia = await S._getInsigniaForPDF(); } catch(e){}
+
+    var periodLabel = '';
+    if(per && per.value){
+        var labels = {'1t':'1. Trimestre','2t':'2. Trimestre','3t':'3. Trimestre','anual':'Anual'};
+        periodLabel = labels[per.value] || '';
+    }
+    if(!periodLabel) periodLabel = di.value + ' a ' + df.value;
+
+    var jsPDF2 = window.jspdf.jsPDF;
+    var doc = new jsPDF2('l', 'mm', 'a4');
+
+    // Cabeçalho
+    if(insignia){ try { doc.addImage(insignia, 'PNG', 140, 4, 12, 12); } catch(e){} }
+    doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(0);
+    doc.text('REPUBLICA DE ANGOLA', 148, 10, {align:'center'});
+    doc.setFontSize(8); doc.setFont('helvetica','normal');
+    doc.text('MINISTERIO DA EDUCACAO', 148, 14, {align:'center'});
+    doc.setDrawColor(204,27,43); doc.setLineWidth(0.4); doc.line(30,16,266,16);
+    doc.setFontSize(9); doc.setFont('helvetica','bold');
+    doc.text((esc.name || '').toUpperCase(), 148, 21, {align:'center'});
+
+    doc.setFontSize(12);
+    doc.text('MAPA DE PRESENCAS -- ' + periodLabel.toUpperCase(), 148, 28, {align:'center'});
+
+    doc.setFontSize(8); doc.setFont('helvetica','normal');
+    doc.text('Classe: ' + cl.value + ' | Turma: ' + tm.value + ' | Periodo: ' + periodLabel + ' | ' + data.totalDias + ' dias de aulas', 148, 33, {align:'center'});
+
+    // Tabela
+    var tableRows = [];
+    for(var i = 0; i < data.rows.length; i++){
+        var r = data.rows[i];
+        tableRows.push([
+            i + 1,
+            r.name,
+            r.genero,
+            r.totalAulas,
+            r.presencas,
+            r.faltasNJ,
+            r.faltasJ,
+            r.atrasos,
+            r.totalFaltas,
+            r.pctAssid + '%',
+            r.obs
+        ]);
+    }
+
+    // Linha total
+    var totAulas = 0;
+    for(var k = 0; k < data.rows.length; k++) totAulas += data.rows[k].totalAulas;
+    var avgAssid = data.rows.length > 0 ? Math.round(data.rows.reduce(function(a,b){return a+b.pctAssid},0) / data.rows.length) : 0;
+
+    tableRows.push([
+        '', 'TOTAL (' + data.rows.length + ' alunos)', '',
+        totAulas, data.totalPresencas, data.totalFaltasNJ, data.totalFaltasJ, data.totalAtrasos,
+        data.totalFaltasNJ + data.totalFaltasJ,
+        avgAssid + '%', ''
+    ]);
+
+    doc.autoTable({
+        startY: 37,
+        head: [['N.', 'Nome Completo', 'Gen.', 'Aulas', 'Pres.', 'Faltas', 'Justif.', 'Atrasos', 'Tot.Falt.', '% Assid.', 'Obs.']],
+        body: tableRows,
+        styles: {fontSize: 7, cellPadding: 2, halign: 'center', lineColor: [200,200,200], lineWidth: 0.1},
+        headStyles: {fillColor: [245,243,240], textColor: [30,30,30], fontStyle: 'bold', fontSize: 6.5},
+        columnStyles: {
+            0: {cellWidth: 8},
+            1: {halign: 'left', cellWidth: 45},
+            2: {cellWidth: 10},
+            10: {halign: 'left', cellWidth: 22}
+        },
+        alternateRowStyles: {fillColor: [254,253,250]},
+        margin: {left: 8, right: 8},
+        didParseCell: function(d2){
+            if(d2.section === 'body'){
+                // Presenças verde
+                if(d2.column.index === 4) d2.cell.styles.textColor = [5,130,90];
+                // Faltas vermelho
+                if(d2.column.index === 5 || d2.column.index === 8) d2.cell.styles.textColor = [220,38,38];
+                // Justificadas azul
+                if(d2.column.index === 6) d2.cell.styles.textColor = [37,99,235];
+                // Atrasos amarelo
+                if(d2.column.index === 7) d2.cell.styles.textColor = [200,150,0];
+                // % Assiduidade
+                if(d2.column.index === 9){
+                    var pct = parseInt(d2.cell.raw);
+                    d2.cell.styles.fontStyle = 'bold';
+                    if(pct >= 75) d2.cell.styles.textColor = [5,130,90];
+                    else if(pct >= 50) d2.cell.styles.textColor = [200,150,0];
+                    else d2.cell.styles.textColor = [220,38,38];
+                }
+                // Última linha (total)
+                if(d2.row.index === tableRows.length - 1){
+                    d2.cell.styles.fillColor = [248,246,242];
+                    d2.cell.styles.fontStyle = 'bold';
+                }
+            }
+        }
+    });
+
+    // Legenda
+    var fy = doc.lastAutoTable.finalY + 5;
+    doc.setFontSize(6.5); doc.setFont('helvetica','normal');
+    doc.text('Legenda: P = Presente | F = Falta | J = Falta Justificada | A = Atraso', 10, fy);
+    doc.text('Observacao: Excelente (>=90%) | Bom (>=75%) | Regular (>=50%) | Critico (>=25%) | Muito critico (<25%)', 10, fy + 3.5);
+
+    // Assinaturas
+    fy += 10;
+    var dirSex = await S._getDirectorSex();
+    var dirName = await S._getCurrentDirector();
+    var subPedSex = await S._getSubPedSex(S.tid());
+    var subPedName = '________________________';
+    try {
+        var usSnap = await db.collection('users').where('tenantId','==',S.tid()).get();
+        usSnap.forEach(function(d2){
+            if(d2.data().role === 'subdiretor_pedagogico' && d2.data().active !== false)
+                subPedName = d2.data().name || '________________________';
+        });
+    } catch(e){}
+
+    doc.setFontSize(7);
+    doc.text((esc.municipality || 'Luanda') + ', ' + new Date().toLocaleDateString('pt-AO'), 148, fy, {align:'center'});
+
+    fy += 8;
+    doc.setDrawColor(0); doc.setLineWidth(0.2);
+
+    // SubDir Pedagógico (esquerda)
+    doc.line(20, fy, 90, fy);
+    doc.setFont('helvetica','bold');
+    doc.text(S._subPedTexto(subPedSex), 55, fy + 4, {align:'center'});
+    doc.setFont('helvetica','normal');
+    doc.line(20, fy + 8, 90, fy + 8);
+    doc.text(subPedName, 55, fy + 12, {align:'center'});
+
+    // Director (direita)
+    doc.line(206, fy, 276, fy);
+    doc.setFont('helvetica','bold');
+    doc.text(S._dirAssinatura(dirSex), 241, fy + 4, {align:'center'});
+    doc.setFont('helvetica','normal');
+    doc.line(206, fy + 8, 276, fy + 8);
+    doc.text(dirName, 241, fy + 12, {align:'center'});
+
+    try { await S.addQR(doc, 'SGE|PRES|' + cl.value + '|' + tm.value + '|' + periodLabel, 140, fy - 2, 14); } catch(e){}
+
+    doc.save('Presencas_' + cl.value + '_' + tm.value + '_' + periodLabel.replace(/\s+/g,'_') + '.pdf');
+    S.toast('Relatorio PDF gerado!', 'success');
+    S.cModal();
+};
+
+// =============================================
+// RELATÓRIO XLSX
+// =============================================
+S._genAttReportXLSX = async function(){
+    var cl = document.getElementById('atr_cl');
+    var tm = document.getElementById('atr_tm');
+    var di = document.getElementById('atr_di');
+    var df = document.getElementById('atr_df');
+    var per = document.getElementById('atr_per');
+
+    if(!cl || !cl.value || !tm || !tm.value || !di || !di.value || !df || !df.value){
+        S.toast('Preencha tudo', 'error'); return;
+    }
+
+    var data = await S._buildAttReportData(cl.value, tm.value, di.value, df.value);
+    var periodLabel = '';
+    if(per && per.value){
+        var labels = {'1t':'1T','2t':'2T','3t':'3T','anual':'Anual'};
+        periodLabel = labels[per.value] || '';
+    }
+    if(!periodLabel) periodLabel = di.value + '_' + df.value;
+
+    var xlData = [];
+    for(var i = 0; i < data.rows.length; i++){
+        var r = data.rows[i];
+        xlData.push({
+            'N.': i + 1,
+            'Nome Completo': r.name,
+            'Genero': r.genero,
+            'Total Aulas': r.totalAulas,
+            'Presencas': r.presencas,
+            'Faltas': r.faltasNJ,
+            'Justificadas': r.faltasJ,
+            'Atrasos': r.atrasos,
+            'Total Faltas': r.totalFaltas,
+            '% Assiduidade': r.pctAssid + '%',
+            'Observacao': r.obs
+        });
+    }
+
+    var ws = XLSX.utils.json_to_sheet(xlData);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Presencas');
+    XLSX.writeFile(wb, 'Presencas_' + cl.value + '_' + tm.value + '_' + periodLabel + '.xlsx');
+    S.toast('XLSX exportado!', 'success');
+    S.cModal();
+};
+
+// =============================================
+// PRESENÇAS PROFESSOR — Mesma funcionalidade
+// =============================================
+S._pgAttendanceProfessor = async function(){
+    var pc = document.getElementById('pgC');
+    var assigns = await S._loadProfAssignments();
+
+    if(assigns.length === 0){
+        pc.innerHTML = '<div class="fade cd tc" style="padding:40px"><span class="material-icons-outlined" style="font-size:2.5rem;color:#D4A017">fact_check</span><h3 class="fw7 mt-m">Sem Atribuicoes</h3></div>';
+        return;
+    }
+
+    var uniqueCT = [];
+    var seen2 = {};
+    for(var i = 0; i < assigns.length; i++){
+        var key = assigns[i].classe + '|' + assigns[i].turma;
+        if(!seen2[key]){
+            seen2[key] = true;
+            uniqueCT.push({classe: assigns[i].classe, turma: assigns[i].turma});
+        }
+    }
+
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Presencas</h2><p class="tm fs-s">Registar e consultar presencas</p></div>'
+        + '<button class="btn btn-g btn-s" onclick="S._attReportModalProf()"><span class="material-icons-outlined" style="font-size:.85rem">assessment</span>Relatorio</button>'
+        + '</div>'
+        + '<div class="cd mb-l"><div class="g3">'
+        + '<div class="fg"><label class="fl">Classe / Turma *</label><select id="at_cl_tm" class="fs">'
+        + '<option value="">--</option>'
+        + uniqueCT.map(function(ct){ return '<option value="' + ct.classe + '|' + ct.turma + '">' + ct.classe + ' - Turma ' + ct.turma + '</option>'; }).join('')
+        + '</select></div>'
+        + '<div class="fg"><label class="fl">Data *</label><input type="date" id="at_dt" class="fi" value="' + new Date().toISOString().split('T')[0] + '"></div>'
+        + '<div class="fg" style="display:flex;align-items:flex-end"><button class="btn btn-r" onclick="S._loadAttProf()" style="width:100%"><span class="material-icons-outlined">fact_check</span>Carregar</button></div>'
+        + '</div></div><div id="atArea"></div></div>';
+};
+
+S._attReportModalProf = function(){
+    var assigns = S._profAssignments || [];
+    var uniqueCT = [];
+    var seen3 = {};
+    for(var i = 0; i < assigns.length; i++){
+        var key = assigns[i].classe + '|' + assigns[i].turma;
+        if(!seen3[key]){ seen3[key] = true; uniqueCT.push({classe:assigns[i].classe, turma:assigns[i].turma}); }
+    }
+
+    S.oModal('Relatorio de Presencas',
+        '<form onsubmit="return false"><div class="g2">'
+        + '<div class="fg gc2"><label class="fl">Classe / Turma *</label><select id="atr_ct" class="fs">'
+        + '<option value="">--</option>'
+        + uniqueCT.map(function(ct){ return '<option value="' + ct.classe + '|' + ct.turma + '">' + ct.classe + ' - ' + ct.turma + '</option>'; }).join('')
+        + '</select></div>'
+        + '<div class="fg"><label class="fl">Data Inicio *</label><input type="date" id="atr_di" class="fi"></div>'
+        + '<div class="fg"><label class="fl">Data Fim *</label><input type="date" id="atr_df" class="fi" value="' + new Date().toISOString().split('T')[0] + '"></div>'
+        + '<div class="fg gc2"><label class="fl">Periodo</label><select id="atr_per" class="fs" onchange="S._atrSetDates()">'
+        + '<option value="">Personalizado</option><option value="1t">1. Trim.</option><option value="2t">2. Trim.</option><option value="3t">3. Trim.</option><option value="anual">Anual</option>'
+        + '</select></div></div></form>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-g btn-s" onclick="S._genAttReportPDFProf()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>'
+        + '<button class="btn btn-o btn-s" onclick="S._genAttReportXLSXProf()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>',
+        '500px');
+};
+
+S._genAttReportPDFProf = async function(){
+    var ct = document.getElementById('atr_ct');
+    if(!ct || !ct.value){ S.toast('Seleccione turma','error'); return; }
+    var parts = ct.value.split('|');
+
+    // Temporariamente definir os campos que _genAttReportPDF precisa
+    var tempCl = document.createElement('select'); tempCl.id = 'atr_cl';
+    var opt1 = document.createElement('option'); opt1.value = parts[0]; opt1.selected = true;
+    tempCl.appendChild(opt1);
+
+    var tempTm = document.createElement('select'); tempTm.id = 'atr_tm';
+    var opt2 = document.createElement('option'); opt2.value = parts[1]; opt2.selected = true;
+    tempTm.appendChild(opt2);
+
+    // Inserir temporariamente
+    var container = document.getElementById('mBd');
+    if(container){ container.appendChild(tempCl); container.appendChild(tempTm); }
+
+    await S._genAttReportPDF();
+
+    // Remover
+    if(tempCl.parentNode) tempCl.remove();
+    if(tempTm.parentNode) tempTm.remove();
+};
+
+S._genAttReportXLSXProf = async function(){
+    var ct = document.getElementById('atr_ct');
+    if(!ct || !ct.value){ S.toast('Seleccione turma','error'); return; }
+    var parts = ct.value.split('|');
+
+    var container = document.getElementById('mBd');
+    var tempCl = document.createElement('select'); tempCl.id = 'atr_cl';
+    var opt1 = document.createElement('option'); opt1.value = parts[0]; opt1.selected = true;
+    tempCl.appendChild(opt1);
+    var tempTm = document.createElement('select'); tempTm.id = 'atr_tm';
+    var opt2 = document.createElement('option'); opt2.value = parts[1]; opt2.selected = true;
+    tempTm.appendChild(opt2);
+    if(container){ container.appendChild(tempCl); container.appendChild(tempTm); }
+
+    await S._genAttReportXLSX();
+
+    if(tempCl.parentNode) tempCl.remove();
+    if(tempTm.parentNode) tempTm.remove();
+};
+
+console.log('Relatorio presencas completo:');
+console.log('  PDF e XLSX por periodo (trimestral/anual/personalizado)');
+console.log('  Colunas: N, Nome, Genero, Aulas, P, F, J, A, Total, %, Obs');
+console.log('  Cores por percentagem de assiduidade');
+console.log('  Assinaturas gendered (SubDir + Director)');
+console.log('  Disponivel para Director, SubDir, Secretaria e Professor');
+</script>
+<!-- ================================================
+     FIM PRESENCAS RELATORIO
+     ================================================ -->
+<!-- ================================================
+     CORREÇÃO DEFINITIVA GÉNERO
+     ================================================ -->
+<script>
+(function(){
+
+    // =============================================
+    // ÚNICA FONTE DE VERDADE PARA GÉNERO
+    // =============================================
+
+    // Buscar sexo do director (sempre do Firestore)
+    S._fetchDirSex = async function(){
+        var tid = S.tid();
+        if(!tid) return '';
+
+        try {
+            // 1. Campo directorSex na escola
+            var schDoc = await db.collection('schools').doc(tid).get();
+            if(!schDoc.exists) return '';
+            var sch = schDoc.data();
+
+            if(sch.directorSex === 'Feminino') return 'Feminino';
+            if(sch.directorSex === 'Masculino') return 'Masculino';
+
+            // 2. Perfil do utilizador director
+            if(sch.directorId){
+                var uDoc = await db.collection('users').doc(sch.directorId).get();
+                if(uDoc.exists){
+                    var sex = uDoc.data().sex;
+                    if(sex === 'Feminino') return 'Feminino';
+                    if(sex === 'Masculino') return 'Masculino';
+                }
+            }
+        } catch(e){
+            console.log('fetchDirSex erro:', e.message);
+        }
+
+        return '';
+    };
+
+    // Buscar nome do director
+    S._fetchDirName = async function(){
+        var tid = S.tid();
+        if(!tid) return '________________________';
+        try {
+            var schDoc = await db.collection('schools').doc(tid).get();
+            if(schDoc.exists && schDoc.data().directorName) return schDoc.data().directorName;
+        } catch(e){}
+        return '________________________';
+    };
+
+    // Buscar sexo do subdirector pedagógico
+    S._fetchSubPedSex = async function(){
+        var tid = S.tid();
+        if(!tid) return '';
+        try {
+            var snap = await db.collection('users').where('tenantId','==',tid).get();
+            var result = '';
+            snap.forEach(function(d){
+                var u = d.data();
+                if(u.role === 'subdiretor_pedagogico' && u.active !== false){
+                    if(u.sex === 'Feminino') result = 'Feminino';
+                    else if(u.sex === 'Masculino') result = 'Masculino';
+                }
+            });
+            return result;
+        } catch(e){ return ''; }
+    };
+
+    // Buscar nome do subdirector pedagógico
+    S._fetchSubPedName = async function(){
+        var tid = S.tid();
+        if(!tid) return '________________________';
+        try {
+            var snap = await db.collection('users').where('tenantId','==',tid).get();
+            var name = '________________________';
+            snap.forEach(function(d){
+                if(d.data().role === 'subdiretor_pedagogico' && d.data().active !== false)
+                    name = d.data().name || '________________________';
+            });
+            return name;
+        } catch(e){ return '________________________'; }
+    };
+
+    // =============================================
+    // TEXTOS COM GÉNERO — VERSÃO FINAL
+    // =============================================
+
+    // Para o corpo do texto: "Director" ou "Directora"
+    S._txtDir = function(sex){
+        if(sex === 'Feminino') return 'Directora';
+        if(sex === 'Masculino') return 'Director';
+        return 'Director(a)';
+    };
+
+    // Para assinatura: "O Director" ou "A Directora"
+    S._sigDir = function(sex){
+        if(sex === 'Feminino') return 'A Directora';
+        if(sex === 'Masculino') return 'O Director';
+        return 'O(A) Director(a)';
+    };
+
+    // SubDir pedagógico
+    S._sigSubPed = function(sex){
+        if(sex === 'Feminino') return 'A Subdirectora Pedagogica';
+        if(sex === 'Masculino') return 'O Subdirector Pedagogico';
+        return 'O(A) Subdirector(a) Pedagogico(a)';
+    };
+
+    // =============================================
+    // CERTIFICADO — VERSÃO FINAL COM GÉNERO
+    // =============================================
+    S._genCertificadosLote = async function(students, esc){
+        var jsPDF2 = window.jspdf.jsPDF;
+        var doc = new jsPDF2('p','mm','a4');
+        var tid = S.tid();
+
+        var yr = '';
+        try { var ay = await S.getActiveYear(); yr = ay ? ay.year : String(new Date().getFullYear()); }
+        catch(e){ yr = String(new Date().getFullYear()); }
+
+        var insignia = null;
+        try { insignia = await S._getInsigniaForPDF(); } catch(e){}
+
+        // BUSCAR GÉNERO E NOME
+        var dirSex = await S._fetchDirSex();
+        var dirName = await S._fetchDirName();
+        var dirTexto = S._txtDir(dirSex);  // "Director" ou "Directora"
+        var dirSig = S._sigDir(dirSex);    // "O Director" ou "A Directora"
+
+        console.log('CERT - dirSex:', dirSex, '-> texto:', dirTexto, '-> sig:', dirSig);
+
+        for(var si = 0; si < students.length; si++){
+            if(si > 0) doc.addPage();
+            var s = students[si];
+            var isFem = s.sex === 'Feminino';
+            var cn = parseInt(s.classe) || 6;
+
+            var alinea = 'b)', nivel = 'o Ensino Primario';
+            var certClasses = ['1. Classe','2. Classe','3. Classe','4. Classe','5. Classe','6. Classe'];
+
+            if(cn >= 7 && cn <= 9){
+                alinea = 'c)'; nivel = 'o I Ciclo do Ensino Secundario Geral';
+                certClasses = ['7. Classe','8. Classe','9. Classe'];
+            } else if(cn >= 10){
+                alinea = 'e)'; nivel = 'o II Ciclo do Ensino Secundario Geral';
+                certClasses = cn >= 13 ? ['10. Classe','11. Classe','12. Classe','13. Classe'] : ['10. Classe','11. Classe','12. Classe'];
+            }
+
+            var curso = '';
+            if(cn >= 10){ try { curso = await S._getStudentCurso(s.id, s.classe, s.turma); } catch(e){} }
+
+            var schoolName = (esc.number ? 'Complexo Escolar N. ' + esc.number + ' ' : '') + (esc.name || '');
+
+            var dobText = '___/___/______';
+            try { if(s.dob) dobText = new Date(s.dob + 'T00:00:00').toLocaleDateString('pt-AO'); } catch(e){ dobText = s.dob || dobText; }
+
+            var biDateText = '___/___/______';
+            try { if(s.biDate) biDateText = new Date(s.biDate + 'T00:00:00').toLocaleDateString('pt-AO'); } catch(e){ biDateText = s.biDate || biDateText; }
+
+            // Notas
+            var allGrades = {}, gTotal = 0, gCount = 0, allDiscs = [], discsMap = {};
+
+            for(var ci = 0; ci < certClasses.length; ci++){
+                var classe = certClasses[ci];
+                allGrades[classe] = {};
+                var discs = S.DISC[classe] || [];
+                for(var dd = 0; dd < discs.length; dd++){
+                    if(!discsMap[discs[dd]]){ discsMap[discs[dd]] = true; allDiscs.push(discs[dd]); }
+                }
+
+                var hist = {};
+                try { var hDoc = await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(classe).get();
+                if(hDoc.exists && hDoc.data().grades) hist = hDoc.data().grades; } catch(e){}
+
+                for(var dj = 0; dj < discs.length; dj++){
+                    var disc = discs[dj], nota = null;
+                    if(hist[disc] !== undefined) nota = Number(hist[disc]);
+                    else {
+                        var dk = disc.replace(/[^a-zA-Z0-9]/g,''), mts = [];
+                        for(var t = 1; t <= 3; t++){
+                            try { var gDoc = await db.collection('schools').doc(tid).collection('grades').doc(s.id+'_'+t+'_'+dk).get();
+                            if(gDoc.exists && gDoc.data().mt != null) mts.push(gDoc.data().mt); } catch(e){}
+                        }
+                        if(mts.length > 0) nota = mts.reduce(function(a,b){return a+b},0) / mts.length;
+                    }
+                    if(nota !== null){ var rv = Math.round(nota); allGrades[classe][disc] = rv; gTotal += rv; gCount++; }
+                }
+            }
+
+            var mediaFinal = gCount > 0 ? Math.round(gTotal / gCount) : 0;
+
+            // PDF
+            if(insignia){ try { doc.addImage(insignia,'PNG',92,6,16,16); } catch(e){} }
+
+            doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(0);
+            doc.text('REPUBLICA DE ANGOLA',105,26,{align:'center'});
+            doc.setFontSize(11);doc.setFont('helvetica','normal');
+            doc.text('MINISTERIO DA EDUCACAO',105,33,{align:'center'});
+            doc.setFontSize(18);doc.setFont('helvetica','bold');
+            doc.text('CERTIFICADO',105,44,{align:'center'});
+
+            // CORPO COM GÉNERO CORRECTO
+            var body = dirName + ', ' + dirTexto + ' do ' + schoolName
+                + ', criado sob o ' + (esc.decree || '________________________')
+                + ', ao abrigo do disposto na alinea ' + alinea + ' do artigo 109. da Lei n. 32/20 de 12 de Agosto'
+                + ', certifica que ' + (s.name || '________________________')
+                + ', filh' + (isFem?'a':'o') + ' de ' + (s.fatherName || '________________________')
+                + ' e de ' + (s.motherName || '________________________')
+                + ', nascid' + (isFem?'a':'o') + ' aos ' + dobText
+                + ', natural de ' + (s.naturalidade || '________________')
+                + ', provincia ' + (s.provOrigem || '________________')
+                + ', portador' + (isFem?'a':'') + ' do B.I. n. ' + (s.bi || '________________')
+                + ', passado pelo Arquivo de Identificacao ' + (s.biLocal ? 'de '+s.biLocal : 'de ________________')
+                + ' aos ' + biDateText
+                + ', concluiu no ano lectivo ' + yr
+                + ' ' + nivel + (curso ? ', na area de '+curso : '')
+                + ', conforme consta do processo individual n. ' + (s.process || '________________')
+                + ', com a media final de ' + mediaFinal + ' valores'
+                + ', obtida pelas seguintes classificacoes por disciplina:';
+
+            doc.setFontSize(10);doc.setFont('helvetica','normal');
+            var bLines = doc.splitTextToSize(body, 170);
+            doc.text(bLines, 20, 54);
+            var ty = 54 + bLines.length * 4.5 + 5;
+
+            // Tabela
+            var headRow = ['Disciplinas'];
+            for(var h2 = 0; h2 < certClasses.length; h2++) headRow.push(certClasses[h2].replace(' Classe','.a'));
+            headRow.push('Media Final','Por Extenso');
+
+            var bodyRows = [];
+            for(var di2 = 0; di2 < allDiscs.length; di2++){
+                var dsc = allDiscs[di2], row2 = [dsc], dT2 = 0, dC2 = 0;
+                for(var cj = 0; cj < certClasses.length; cj++){
+                    var nt = allGrades[certClasses[cj]][dsc];
+                    if(nt !== undefined){ row2.push(nt); dT2 += nt; dC2++; } else row2.push('-');
+                }
+                var dAv = dC2 > 0 ? Math.round(dT2/dC2) : '-';
+                row2.push(dAv, dAv !== '-' ? S._intToWords(dAv) : '-');
+                bodyRows.push(row2);
+            }
+
+            doc.autoTable({startY:ty,head:[headRow],body:bodyRows,
+                styles:{fontSize:7.5,cellPadding:2,halign:'center',lineColor:[180,180,180],lineWidth:0.15},
+                headStyles:{fillColor:[245,243,240],textColor:[30,30,30],fontStyle:'bold',fontSize:7},
+                columnStyles:{0:{halign:'left',cellWidth:40}},margin:{left:18,right:18},
+                didParseCell:function(d2){if(d2.section==='body'&&d2.cell.raw==='-')d2.cell.styles.textColor=[190,190,190]}
+            });
+
+            ty = doc.lastAutoTable.finalY + 6;
+            if(ty > 235){ doc.addPage(); ty = 20; }
+
+            var endTxt = 'Para efeitos legais, e passado o presente CERTIFICADO, que consta no livro de registo n. '
+                + (s.process||'____') + ', folha ' + (cn<=6?'6':cn<=9?'9':cn<=12?'12':'13') + '-' + yr
+                + ', assinado por mim e autenticado com carimbo a oleo / selo branco em uso neste estabelecimento de ensino.';
+            doc.setFontSize(10);doc.setFont('helvetica','normal');
+            var eLines = doc.splitTextToSize(endTxt, 170);
+            doc.text(eLines, 20, ty);
+            ty += eLines.length * 4.5 + 8;
+
+            var meses2 = ['JANEIRO','FEVEREIRO','MARCO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+            doc.text((esc.name||esc.municipality||'LUANDA').toUpperCase()+', AOS '+new Date().getDate()+' DE '+meses2[new Date().getMonth()]+' DE '+new Date().getFullYear(), 105, ty, {align:'center'});
+
+            ty += 10;
+            doc.text('Conferido por:', 20, ty);
+            ty += 14;
+            doc.setDrawColor(0);doc.setLineWidth(0.3);doc.line(55,ty,155,ty);
+            ty += 8;
+
+            // ASSINATURA COM GÉNERO
+            doc.setFontSize(11);doc.setFont('helvetica','bold');
+            doc.text(dirSig, 105, ty, {align:'center'});
+
+            ty += 6;
+            doc.line(55,ty,155,ty);
+            ty += 5;
+            doc.setFontSize(10);doc.setFont('helvetica','normal');
+            doc.text(dirName, 105, ty, {align:'center'});
+
+            try { await S.addQR(doc,'SGE|CERT|'+(s.name||'')+'|MF:'+mediaFinal,170,ty-28,18); } catch(e){}
+        }
+
+        doc.save(students.length===1?'Certificado_'+(students[0].name||'').replace(/\s+/g,'_')+'.pdf':'Certificados_'+students.length+'.pdf');
+        S.toast(students.length+' certificado(s)!','success');
+    };
+
+    // =============================================
+    // DECLARAÇÃO — VERSÃO FINAL COM GÉNERO
+    // =============================================
+    S._genDeclaracoesLote = async function(students, esc){
+        var jsPDF2 = window.jspdf.jsPDF;
+        var doc = new jsPDF2('p','mm','a4');
+        var tid = S.tid();
+
+        var yr = '';
+        try { var ay = await S.getActiveYear(); yr = ay ? ay.year : String(new Date().getFullYear()); }
+        catch(e){ yr = String(new Date().getFullYear()); }
+
+        var insignia = null;
+        try { insignia = await S._getInsigniaForPDF(); } catch(e){}
+
+        var dirSex = await S._fetchDirSex();
+        var dirName = await S._fetchDirName();
+        var dirTexto = S._txtDir(dirSex);
+        var dirSig = S._sigDir(dirSex);
+
+        var subPedSex = await S._fetchSubPedSex();
+        var subPedName = await S._fetchSubPedName();
+        var subPedSig = S._sigSubPed(subPedSex);
+
+        console.log('DECL - dirSex:', dirSex, '-> texto:', dirTexto, '| subPedSex:', subPedSex);
+
+        for(var si = 0; si < students.length; si++){
+            if(si > 0) doc.addPage();
+            var s = students[si];
+            var isFem = s.sex === 'Feminino';
+            var pg = S.passG(s.classe);
+            var cn = parseInt(s.classe) || 6;
+
+            var alinea = 'b)', nivel = 'o Ensino Primario';
+            if(cn >= 7 && cn <= 9){ alinea = 'c)'; nivel = 'o I Ciclo do Ensino Secundario Geral'; }
+            else if(cn >= 10){ alinea = 'e)'; nivel = 'o II Ciclo do Ensino Secundario Geral'; }
+
+            var curso = '';
+            if(cn >= 10){ try { curso = await S._getStudentCurso(s.id,s.classe,s.turma); } catch(e){} }
+
+            var schoolName = (esc.number?'Complexo Escolar N. '+esc.number+' ':'')+(esc.name||'');
+
+            var dobText = '___/___/______';
+            try{if(s.dob)dobText=new Date(s.dob+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){dobText=s.dob||dobText}
+            var biDateText = '___/___/______';
+            try{if(s.biDate)biDateText=new Date(s.biDate+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){biDateText=s.biDate||biDateText}
+
+            var discs = S.DISC[s.classe]||[], gradeRows = [], nTotal = 0, nCount = 0;
+            var hist = {};
+            try{var hDoc=await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(s.classe).get();if(hDoc.exists&&hDoc.data().grades)hist=hDoc.data().grades}catch(e){}
+
+            for(var di=0;di<discs.length;di++){
+                var disc=discs[di],nota=null;
+                if(hist[disc]!==undefined)nota=Number(hist[disc]);
+                else{var dk=disc.replace(/[^a-zA-Z0-9]/g,''),mts=[];for(var t=1;t<=3;t++){try{var g=await db.collection('schools').doc(tid).collection('grades').doc(s.id+'_'+t+'_'+dk).get();if(g.exists&&g.data().mt!=null)mts.push(g.data().mt)}catch(e){}}if(mts.length>0)nota=mts.reduce(function(a,b){return a+b},0)/mts.length}
+                var rounded=nota!==null?Math.round(nota):null;
+                if(rounded!==null){nTotal+=rounded;nCount++}
+                gradeRows.push([disc,rounded!==null?rounded:'-',rounded!==null?S._intToWords(rounded):'-']);
+            }
+            var avg = nCount > 0 ? Math.round(nTotal/nCount) : 0;
+
+            if(insignia){try{doc.addImage(insignia,'PNG',92,6,16,16)}catch(e){}}
+
+            doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(0);
+            doc.text('REPUBLICA DE ANGOLA',105,26,{align:'center'});
+            doc.setFontSize(11);doc.setFont('helvetica','normal');
+            doc.text('MINISTERIO DA EDUCACAO',105,33,{align:'center'});
+            doc.setFontSize(18);doc.setFont('helvetica','bold');
+            doc.text('DECLARACAO',105,44,{align:'center'});
+
+            // CORPO COM GÉNERO
+            var body = dirName + ', ' + dirTexto + ' do ' + schoolName
+                + ', criado sob o ' + (esc.decree||'________________________')
+                + ', ao abrigo do disposto na alinea '+alinea+' do artigo 109. da Lei n. 32/20 de 12 de Agosto'
+                + ', declara que '+(s.name||'________________________')
+                + ', filh'+(isFem?'a':'o')+' de '+(s.fatherName||'________________________')
+                + ' e de '+(s.motherName||'________________________')
+                + ', nascid'+(isFem?'a':'o')+' aos '+dobText
+                + ', natural de '+(s.naturalidade||'________________')
+                + ', provincia '+(s.provOrigem||'________________')
+                + ', portador'+(isFem?'a':'')+' do B.I. n. '+(s.bi||'________________')
+                + ', passado pelo Arquivo de Identificacao '+(s.biLocal?'de '+s.biLocal:'de ________________')
+                + ' aos '+biDateText
+                + ', frequentou no ano lectivo '+yr
+                + ' '+nivel+(curso?', na area de '+curso:'')
+                + ', na '+(s.classe||'____')+', turma "'+(s.turma||'__')+'", turno da '+(s.turno||'______')
+                + ', neste estabelecimento de ensino, tendo obtido as seguintes classificacoes:';
+
+            doc.setFontSize(10);doc.setFont('helvetica','normal');
+            var bLines=doc.splitTextToSize(body,170);
+            doc.text(bLines,20,54);
+            var ty=54+bLines.length*4.5+4;
+
+            doc.autoTable({startY:ty,head:[['Disciplina','Nota','Por Extenso']],body:gradeRows,
+                styles:{fontSize:8,cellPadding:2.5,halign:'center',lineColor:[180,180,180],lineWidth:0.15},
+                headStyles:{fillColor:[245,243,240],textColor:[30,30,30],fontStyle:'bold'},
+                columnStyles:{0:{halign:'left',cellWidth:65},2:{halign:'left',cellWidth:45}},margin:{left:25,right:25},
+                didParseCell:function(d2){if(d2.section==='body'&&d2.column.index===1){if(d2.cell.raw==='-')d2.cell.styles.textColor=[190,190,190];else{d2.cell.styles.fontStyle='bold';var v=Number(d2.cell.raw);if(!isNaN(v))d2.cell.styles.textColor=v>=pg?[0,100,0]:[200,0,0]}}}
+            });
+
+            ty=doc.lastAutoTable.finalY+4;
+            doc.setFontSize(10);doc.setFont('helvetica','bold');
+            doc.text('Media Final: '+avg+' ('+S._intToWords(avg)+')',105,ty,{align:'center'});
+
+            ty+=5;doc.setFont('helvetica','normal');
+            var endTxt='Para efeitos legais, e passada a presente DECLARACAO, assinada e autenticada com carimbo em uso neste estabelecimento de ensino.';
+            var eLines=doc.splitTextToSize(endTxt,170);doc.text(eLines,20,ty);
+            ty+=eLines.length*4.5+8;
+
+            var meses2=['JANEIRO','FEVEREIRO','MARCO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+            doc.text((esc.name||esc.municipality||'LUANDA').toUpperCase()+', AOS '+new Date().getDate()+' DE '+meses2[new Date().getMonth()]+' DE '+new Date().getFullYear(),105,ty,{align:'center'});
+
+            ty+=14;
+            doc.setDrawColor(0);doc.setLineWidth(0.3);
+
+            // ESQUERDA — SubDir com género
+            doc.line(20,ty,90,ty);
+            doc.setFontSize(8);doc.setFont('helvetica','bold');
+            doc.text(subPedSig,55,ty+5,{align:'center'});
+            doc.setFont('helvetica','normal');
+            doc.line(20,ty+10,90,ty+10);
+            doc.text(subPedName,55,ty+14,{align:'center'});
+
+            // DIREITA — Director com género
+            doc.line(120,ty,190,ty);
+            doc.setFont('helvetica','bold');
+            doc.text(dirSig,155,ty+5,{align:'center'});
+            doc.setFont('helvetica','normal');
+            doc.line(120,ty+10,190,ty+10);
+            doc.text(dirName,155,ty+14,{align:'center'});
+
+            try{await S.addQR(doc,'SGE|DECL|'+(s.name||''),97,ty-2,14)}catch(e){}
+        }
+
+        doc.save(students.length===1?'Declaracao_'+(students[0].name||'').replace(/\s+/g,'_')+'.pdf':'Declaracoes_'+students.length+'.pdf');
+        S.toast(students.length+' declaracao(oes)!','success');
+    };
+
+    console.log('=== GENERO CORRIGIDO DEFINITIVAMENTE ===');
+    console.log('Funcoes unicas: _fetchDirSex, _fetchDirName, _txtDir, _sigDir');
+    console.log('Certificado: corpo usa _txtDir, assinatura usa _sigDir');
+    console.log('Declaracao: corpo usa _txtDir, assinaturas usam _sigDir e _sigSubPed');
+
+})();
+</script>
+<!-- ================================================
+     FIM GÉNERO DEFINITIVO
+     ================================================ -->
 </body>
 </html>
