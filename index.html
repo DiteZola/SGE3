@@ -22246,561 +22246,431 @@ console.log('  Nomes reais buscados do Firestore');
 <!-- ================================================
      FIM BOLETINS COM ASSINATURAS
      ================================================ -->
-<!-- ================================================================
-     PATCH — Reconhecimento de Género do Director + Perfil Completo
-     
-     INSTRUÇÕES:
-     Cole este bloco inteiro ANTES do </body> no index.html,
-     logo a seguir ao bloco "FIM BOLETINS COM ASSINATURAS".
-     
-     O que este patch faz:
-     1. Reconhece automaticamente "Director" / "Directora" / "Director(a)"
-        com base no sexo registado no perfil
-     2. Actualiza os rótulos nos documentos PDF (boletins, etc.)
-     3. Permite ao Director editar um perfil completo (igual ao funcionário):
-        foto, sexo, BI, NIF, nascimento, formação, nº mecânico,
-        turno, morada — além de nome e telefone
-     4. Actualiza a sidebar com o título correcto
-     
-     Dite Zola NG © 2025 — SGE-NG
-     ================================================================ -->
+<!-- ================================================
+     CORREÇÃO — Género + Fotos
+     ================================================ -->
 <script>
-// ================================================================
-// § 1 — HELPER: Título do Director por Género
-// ================================================================
-S.getDirTitle = function(sex, withGeral){
-    var base;
-    if(sex === 'Masculino')      base = 'Director';
-    else if(sex === 'Feminino')  base = 'Directora';
-    else                         base = 'Director(a)';
-    return withGeral ? base + ' Geral' : base;
+// =============================================
+// 1. FIX FOTOS — Garantir que funciona sempre
+// =============================================
+S._processPhoto = function(file){
+    return new Promise(function(resolve, reject){
+        if(!file) return resolve(null);
+        if(!file.type || !file.type.match('image')) return reject('Nao e imagem');
+        if(file.size > 8000000) return reject('Max 8MB');
+
+        var reader = new FileReader();
+        reader.onerror = function(){ reject('Erro leitura'); };
+        reader.onload = function(e){
+            var img = new Image();
+            img.onerror = function(){ reject('Imagem invalida'); };
+            img.onload = function(){
+                try {
+                    var canvas = document.createElement('canvas');
+                    var w = img.width, h = img.height;
+                    if(w > 250 || h > 250){
+                        if(w > h){ h = Math.round(h * 250 / w); w = 250; }
+                        else { w = Math.round(w * 250 / h); h = 250; }
+                    }
+                    canvas.width = w; canvas.height = h;
+                    var ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(0, 0, w, h);
+                    ctx.drawImage(img, 0, 0, w, h);
+                    var result = canvas.toDataURL('image/jpeg', 0.5);
+                    resolve(result);
+                } catch(err){ reject('Erro compressao'); }
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
 };
 
-// Variável global usada pelo interceptor do jsPDF
-S._currentDirTitle = null;
+// =============================================
+// 2. FIX saveStud — Foto + dados completos
+// =============================================
+S.saveStud = async function(editId){
+    var nameEl = document.getElementById('st_name');
+    var sexEl = document.getElementById('st_sex');
+    var classeEl = document.getElementById('st_classe');
 
-// ================================================================
-// § 2 — INTERCEPTOR jsPDF: substituir rótulos no PDF automaticamente
-//
-//   "O(A) Director(a)" → "O Director" / "A Directora"
-//   "Director(a)"      → "Director" / "Directora"
-// ================================================================
-(function patchJsPDF(){
-    if(!window.jspdf || !window.jspdf.jsPDF){
-        setTimeout(patchJsPDF, 600);
-        return;
-    }
-    var _ot = window.jspdf.jsPDF.prototype.text;
-    window.jspdf.jsPDF.prototype.text = function(){
-        var args = Array.prototype.slice.call(arguments);
-        var title = S._currentDirTitle;
-        if(title && title !== 'Director(a)' && typeof args[0] === 'string'){
-            if(args[0] === 'O(A) Director(a)'){
-                args[0] = (title === 'Directora' ? 'A ' : 'O ') + title;
-            } else if(args[0] === 'Director(a)'){
-                args[0] = title;
+    if(!nameEl || !nameEl.value.trim()) return S.toast('Nome obrigatorio','error');
+    if(!sexEl || !sexEl.value) return S.toast('Sexo obrigatorio','error');
+    if(!classeEl || !classeEl.value) return S.toast('Classe obrigatoria','error');
+
+    var tid = S.tid();
+    if(!tid) return S.toast('Escola nao definida','error');
+
+    var btn = document.getElementById('stSvBt');
+    if(btn){ btn.disabled = true; btn.innerHTML = 'Guardando...'; }
+
+    try {
+        // Processar foto ANTES de tudo
+        var photo = null;
+        var phInput = document.getElementById('stPh');
+        if(phInput && phInput.files && phInput.files.length > 0){
+            try {
+                photo = await S._processPhoto(phInput.files[0]);
+            } catch(photoErr){
+                console.log('Foto nao processada:', photoErr);
             }
         }
-        return _ot.apply(this, args);
-    };
-    console.log('[SGE-NG Patch] Interceptor jsPDF Director activo.');
-})();
 
-// ================================================================
-// § 3 — OVERRIDE _getSchoolSignatures: inclui directorTitle
-// ================================================================
-S._getSchoolSignatures = async function(tid, classe, turma){
-    var result = {
-        director:     '________________________',
-        directorTitle: 'Director(a)',
-        subPedagogico:'________________________',
-        coordenador:  '________________________',
-        coordType:    ''
-    };
-    if(!tid) return result;
+        var data = {
+            name: nameEl.value.trim(),
+            sex: sexEl.value,
+            classe: classeEl.value,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
 
-    // Director — nome e género a partir do documento de escola
+        // Campos opcionais - verificar se existem
+        var fields = [
+            ['st_dob','dob'],['st_nationality','nationality'],['st_naturalidade','naturalidade'],
+            ['st_provOrigem','provOrigem'],['st_bi','bi'],['st_biDate','biDate'],
+            ['st_biLocal','biLocal'],['st_nif','nif'],['st_process','process'],
+            ['st_matricula','matricula'],['st_turma','turma'],['st_turno','turno'],
+            ['st_yearIn','yearIngresso'],['st_prevSchool','previousSchool'],['st_status','status'],
+            ['st_father','fatherName'],['st_mother','motherName'],['st_guardian','guardian'],
+            ['st_guardianRel','guardianRelation'],['st_guardianBI','guardianBI'],
+            ['st_guardianPhone','guardianPhone'],['st_guardianPhone2','guardianPhone2'],
+            ['st_guardianEmail','guardianEmail'],['st_guardianJob','guardianJob'],
+            ['st_addrProv','addrProvince'],['st_addrMun','addrMunicipality'],
+            ['st_addrBairro','addrBairro'],['st_addrRua','addrRua'],
+            ['st_finStatus','financialStatus'],['st_obs','observations'],
+            ['st_special','specialNeeds'],['st_health','healthCondition'],
+            ['st_blood','bloodType'],['st_blood2','bloodType'],
+            ['st_allergies','allergies'],['st_chronic','chronicDisease'],
+            ['st_medication','medication'],['st_guardianBlood','guardianBloodType'],
+            ['st_hospital','hospital']
+        ];
+
+        for(var i = 0; i < fields.length; i++){
+            var el = document.getElementById(fields[i][0]);
+            if(el){
+                var val = el.value;
+                if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') val = val.trim();
+                if(fields[i][0] === 'st_turma') val = val.toUpperCase();
+                data[fields[i][1]] = val;
+            }
+        }
+
+        // Foto
+        if(photo) data.photo = photo;
+
+        if(editId){
+            await db.collection('schools').doc(tid).collection('students').doc(editId).update(data);
+            S.toast('Estudante actualizado!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            data.createdBy = S.user.uid;
+            await db.collection('schools').doc(tid).collection('students').add(data);
+            S.toast('Estudante cadastrado!','success');
+        }
+        S.cModal();
+    } catch(e){
+        if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">save</span>Guardar'; }
+        S.toast('Erro: ' + e.message,'error');
+    }
+};
+
+// =============================================
+// 3. FIX saveStaff — Foto + dados completos
+// =============================================
+S.saveStaff = async function(editId){
+    var nameEl = document.getElementById('sf_name');
+    var cargoEl = document.getElementById('sf_cargo');
+
+    if(!nameEl || !nameEl.value.trim()) return S.toast('Nome obrigatorio','error');
+    if(!cargoEl || !cargoEl.value.trim()) return S.toast('Cargo obrigatorio','error');
+
+    var tid = S.tid();
+    if(!tid) return S.toast('Escola nao definida','error');
+
+    var btn = document.getElementById('sfSvBt');
+    if(btn){ btn.disabled = true; btn.innerHTML = 'Guardando...'; }
+
+    try {
+        var photo = null;
+        var phInput = document.getElementById('sfPh');
+        if(phInput && phInput.files && phInput.files.length > 0){
+            try { photo = await S._processPhoto(phInput.files[0]); } catch(e){ console.log('Foto staff:', e); }
+        }
+
+        var data = {
+            name: nameEl.value.trim(),
+            cargo: cargoEl.value.trim(),
+            active: true,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        var fields = [
+            ['sf_sex','sex'],['sf_dob','dob'],['sf_nationality','nationality'],
+            ['sf_naturalidade','naturalidade'],['sf_provOrigem','provOrigem'],
+            ['sf_marital','maritalStatus'],['sf_children','children'],
+            ['sf_bi','bi'],['sf_biDate','biDate'],['sf_biLocal','biLocal'],
+            ['sf_nif','nif'],['sf_passport','passport'],['sf_inss','inss'],
+            ['sf_phone','phone'],['sf_phone2','phone2'],['sf_email','email'],
+            ['sf_emailInst','emailInst'],['sf_address','address'],
+            ['sf_addrMun','addrMunicipality'],['sf_addrProv','addrProvince'],
+            ['sf_emergency','emergencyContact'],['sf_academicLevel','academicLevel'],
+            ['sf_formacao','formacao'],['sf_institution','institution'],
+            ['sf_gradYear','graduationYear'],['sf_otherFormation','otherFormation'],
+            ['sf_funcao','funcao'],['sf_dept','department'],
+            ['sf_category','professionalCategory'],['sf_mec','mecNumber'],
+            ['sf_agentNum','agentNumber'],['sf_admission','admissionDate'],
+            ['sf_contract','contractType'],['sf_shift','shift'],
+            ['sf_serviceYears','serviceYears'],['sf_prevExperience','previousExperience'],
+            ['sf_salary','salary'],['sf_subsidies','subsidies'],
+            ['sf_bank','bank'],['sf_iban','iban'],
+            ['sf_blood','bloodType'],['sf_allergies','allergies'],
+            ['sf_chronic','chronicDisease'],['sf_disability','disability'],
+            ['sf_medication','medication'],['sf_obs','observations']
+        ];
+
+        for(var i = 0; i < fields.length; i++){
+            var el = document.getElementById(fields[i][0]);
+            if(el){
+                var val = el.value;
+                if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') val = val.trim();
+                data[fields[i][1]] = val;
+            }
+        }
+
+        if(photo) data.photo = photo;
+
+        if(editId){
+            await db.collection('schools').doc(tid).collection('staff').doc(editId).update(data);
+            S.toast('Funcionario actualizado!','success');
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('schools').doc(tid).collection('staff').add(data);
+            S.toast('Funcionario cadastrado!','success');
+        }
+        S.cModal();
+    } catch(e){
+        if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">save</span>Guardar'; }
+        S.toast('Erro: ' + e.message,'error');
+    }
+};
+
+// =============================================
+// 4. GÉNERO NOS DOCUMENTOS — Funções directas
+// =============================================
+
+// Título do director baseado no sexo
+S._dirTitle = function(sex){
+    if(sex === 'Feminino') return 'A Directora';
+    if(sex === 'Masculino') return 'O Director';
+    return 'O(A) Director(a)';
+};
+
+S._dirTitleSimple = function(sex){
+    if(sex === 'Feminino') return 'Directora';
+    if(sex === 'Masculino') return 'Director';
+    return 'Director(a)';
+};
+
+S._subPedTitleFn = function(sex){
+    if(sex === 'Feminino') return 'A Subdirectora Pedagogica';
+    if(sex === 'Masculino') return 'O Subdirector Pedagogico';
+    return 'O(A) Subdirector(a) Pedagogico(a)';
+};
+
+// Buscar sexo do director
+S._getDirectorSex = async function(schoolId){
+    var tid = schoolId || S.tid();
+    if(!tid) return '';
+
     try {
         var schDoc = await db.collection('schools').doc(tid).get();
-        if(schDoc.exists){
-            var sd = schDoc.data();
-            if(sd.directorName) result.director = sd.directorName;
-            result.directorTitle = S.getDirTitle(sd.directorSex || '');
+        if(!schDoc.exists) return '';
+        var sch = schDoc.data();
+
+        // Verificar directorSex na escola
+        if(sch.directorSex) return sch.directorSex;
+
+        // Buscar do perfil do utilizador
+        if(sch.directorId){
+            var uDoc = await db.collection('users').doc(sch.directorId).get();
+            if(uDoc.exists && uDoc.data().sex) return uDoc.data().sex;
         }
     } catch(e){}
 
-    // Actualizar variável global para o interceptor do jsPDF
-    S._currentDirTitle = result.directorTitle;
+    return '';
+};
 
-    // Subdirector Pedagógico
+// Buscar sexo do subdirector
+S._getSubPedSex = async function(tid){
     try {
-        var usSnap = await db.collection('users')
-            .where('tenantId','==',tid).get();
-        usSnap.forEach(function(d2){
+        var snap = await db.collection('users').where('tenantId','==',tid).get();
+        var sex = '';
+        snap.forEach(function(d2){
             var u = d2.data();
-            if(u.role === 'subdiretor_pedagogico' && u.active !== false)
-                result.subPedagogico = u.name || '________________________';
+            if(u.role === 'subdiretor_pedagogico' && u.active !== false){
+                sex = u.sex || '';
+            }
+        });
+        return sex;
+    } catch(e){ return ''; }
+};
+
+// =============================================
+// 5. ACTUALIZAR CERTIFICADO — Género correcto
+// =============================================
+var _origCert2 = S._genCertificadosLote;
+S._genCertificadosLote = async function(students, esc){
+    var dirSex = await S._getDirectorSex();
+    esc._dirSex = dirSex;
+    esc._dirTitleText = S._dirTitleSimple(dirSex);
+    esc._dirTitleFull = S._dirTitle(dirSex);
+    esc.directorName = await S._getCurrentDirector();
+    await _origCert2.call(this, students, esc);
+};
+
+// =============================================
+// 6. ACTUALIZAR DECLARAÇÃO — Género correcto
+// =============================================
+var _origDecl2 = S._genDeclaracoesLote;
+S._genDeclaracoesLote = async function(students, esc){
+    var dirSex = await S._getDirectorSex();
+    var subPedSex = await S._getSubPedSex(S.tid());
+
+    esc._dirSex = dirSex;
+    esc._dirTitleText = S._dirTitleSimple(dirSex);
+    esc._dirTitleFull = S._dirTitle(dirSex);
+    esc._subPedTitle = S._subPedTitleFn(subPedSex);
+    esc.directorName = await S._getCurrentDirector();
+
+    // Buscar nome subdirector
+    var subPedName = '________________________';
+    try {
+        var usSnap = await db.collection('users').where('tenantId','==',S.tid()).get();
+        usSnap.forEach(function(d2){
+            if(d2.data().role === 'subdiretor_pedagogico' && d2.data().active !== false){
+                subPedName = d2.data().name || '________________________';
+            }
+        });
+    } catch(e){}
+    esc._subPedName = subPedName;
+
+    await _origDecl2.call(this, students, esc);
+};
+
+// =============================================
+// 7. ACTUALIZAR ASSINATURAS — Género nos boletins
+// =============================================
+S._getSchoolSignatures = async function(tid, classe, turma){
+    var dirSex = await S._getDirectorSex(tid);
+    var subPedSex = await S._getSubPedSex(tid);
+    var dirName = await S._getCurrentDirector(tid);
+
+    var result = {
+        director: dirName,
+        directorTitle: S._dirTitle(dirSex),
+        subPedagogico: '________________________',
+        subPedTitle: S._subPedTitleFn(subPedSex),
+        coordenador: '________________________',
+        coordType: '',
+        coordTitle: ''
+    };
+
+    // SubDir nome
+    try {
+        var usSnap = await db.collection('users').where('tenantId','==',tid).get();
+        usSnap.forEach(function(d2){
+            if(d2.data().role === 'subdiretor_pedagogico' && d2.data().active !== false){
+                result.subPedagogico = d2.data().name || '________________________';
+            }
         });
     } catch(e){}
 
-    // Coordenador de Classe (Primário) ou de Turma (I/II Ciclo)
+    // Coordenador
     var cn = parseInt(classe) || 0;
-    result.coordType = (cn >= 1 && cn <= 6)
-        ? 'Coord. de Classe'
-        : 'Coord. de Turma';
-    var cType = (cn >= 1 && cn <= 6) ? 'classe' : 'turma';
+    if(cn >= 1 && cn <= 6){
+        result.coordType = 'Coord. de Classe';
+        result.coordTitle = 'Coord. de Classe';
+    } else {
+        result.coordType = 'Coord. de Turma';
+        result.coordTitle = 'Coord. de Turma';
+    }
 
     try {
-        var coordSnap = await db.collection('schools')
-            .doc(tid).collection('coordinations').get();
+        var coordSnap = await db.collection('schools').doc(tid).collection('coordinations').get();
         coordSnap.forEach(function(d2){
             var c = d2.data();
             if(c.active === false) return;
-            if(cType === 'classe' && c.type === 'classe' && c.detail === classe)
-                result.coordenador = c.professorName || '________________________';
-            if(cType === 'turma' && c.type === 'turma' &&
-               (c.detail === classe || c.detail === turma || c.detail === classe+' '+turma))
-                result.coordenador = c.professorName || '________________________';
+            var match = false;
+            if(cn >= 1 && cn <= 6 && c.type === 'classe' && c.detail === classe) match = true;
+            if(cn >= 7 && c.type === 'turma') match = true;
+            if(match) result.coordenador = c.professorName || '________________________';
         });
     } catch(e){}
 
     return result;
 };
 
-// ================================================================
-// § 4 — OVERRIDE mdDirector: campo Sexo na criação do Director
-// ================================================================
-S.mdDirector = async function(){
-    var opts = '<option value="">Seleccionar escola...</option>';
-    try{
-        (await db.collection('schools').where('active','==',true)
-            .orderBy('name').get())
-            .forEach(d=>{opts+=`<option value="${d.id}">${d.data().name}</option>`});
-    }catch(e){}
-
-    this.oModal('Novo Director',`
-        <form onsubmit="return false">
-            <div style="display:flex;justify-content:center;margin-bottom:14px">
-                <div class="ph-up" onclick="document.getElementById('drPh').click()">
-                    <span class="material-icons-outlined" style="color:#9CA3AF;font-size:1.4rem">photo_camera</span>
-                    <span style="font-size:.55rem;color:#9CA3AF;margin-top:2px">Foto</span>
-                    <img id="drPhPv" style="display:none">
-                </div>
-                <input type="file" id="drPh" accept="image/*" style="display:none"
-                    onchange="S.prevPh(this,'drPhPv')">
-            </div>
-            <div class="g2">
-                <div class="fg gc2"><label class="fl">Nome Completo *</label>
-                    <input type="text" id="dr_n" class="fi" required></div>
-
-                <div class="fg">
-                    <label class="fl">Sexo *
-                        <span style="color:#D4A017;font-size:.65rem;margin-left:4px"
-                            title="Determina o título nos documentos oficiais">
-                            (define título nos documentos)</span>
-                    </label>
-                    <select id="dr_sx" class="fs">
-                        <option value="">Seleccionar...</option>
-                        <option value="Masculino">Masculino — Director</option>
-                        <option value="Feminino">Feminino — Directora</option>
-                    </select>
-                </div>
-
-                <div class="fg"><label class="fl">Email *</label>
-                    <input type="email" id="dr_e" class="fi" required></div>
-                <div class="fg"><label class="fl">Telefone</label>
-                    <input type="tel" id="dr_p" class="fi" placeholder="+244"></div>
-                <div class="fg gc2"><label class="fl">Escola *</label>
-                    <select id="dr_s" class="fs" required>${opts}</select></div>
-                <div class="fg"><label class="fl">Palavra-passe * (mín. 8)</label>
-                    <input type="password" id="dr_pw" class="fi" minlength="8" required></div>
-                <div class="fg"><label class="fl">Confirmar *</label>
-                    <input type="password" id="dr_pw2" class="fi" required></div>
-            </div>
-        </form>
-    `,`<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
-       <button class="btn btn-r" onclick="S.saveDir()" id="drSvBt">
-           <span class="material-icons-outlined">save</span>Criar Director</button>`);
+// =============================================
+// 8. ACTUALIZAR PASSES — Género
+// =============================================
+var _origPassesLote = S._genPassesLote;
+S._genPassesLote = async function(students, esc){
+    var dirSex = await S._getDirectorSex();
+    esc._dirTitleFull = S._dirTitle(dirSex);
+    esc.directorName = await S._getCurrentDirector();
+    await _origPassesLote.call(this, students, esc);
 };
 
-// ================================================================
-// § 5 — OVERRIDE saveDir: guardar sexo no utilizador e na escola
-// ================================================================
-S.saveDir = async function(){
-    var n   = document.getElementById('dr_n').value.trim();
-    var e   = document.getElementById('dr_e').value.trim();
-    var p   = document.getElementById('dr_p').value.trim();
-    var sx  = (document.getElementById('dr_sx')?.value) || '';
-    var s   = document.getElementById('dr_s').value;
-    var pw  = document.getElementById('dr_pw').value;
-    var pw2 = document.getElementById('dr_pw2').value;
-
-    if(!n||!e||!s||!pw) return this.toast('Preencha todos os campos obrigatórios','error');
-    if(pw.length < 8)   return this.toast('Senha mínimo 8 caracteres','error');
-    if(pw !== pw2)       return this.toast('Senhas não coincidem','error');
-
-    var bt = document.getElementById('drSvBt');
-    bt.disabled = true;
-    bt.innerHTML = '<span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:.9rem">hourglass_empty</span>Criando...';
-
-    try{
-        var cr = await auth.createUserWithEmailAndPassword(e, pw);
-        var photo = null;
-        var phI = document.getElementById('drPh');
-        if(phI.files.length > 0){
-            var c = await this.compress(phI.files[0], 300, .7);
-            var ref = storage.ref('users/photos/' + cr.user.uid);
-            await ref.putString(c, 'data_url');
-            photo = await ref.getDownloadURL();
-        }
-
-        // Guardar utilizador com sexo
-        await db.collection('users').doc(cr.user.uid).set({
-            uid:       cr.user.uid,
-            name:      n,
-            email:     e,
-            phone:     p,
-            sex:       sx,
-            role:      'diretor',
-            tenantId:  s,
-            active:    true,
-            photo:     photo,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            createdBy: this.user.uid
-        });
-
-        // Actualizar escola com nome, id e sexo do director
-        await db.collection('schools').doc(s).update({
-            directorId:   cr.user.uid,
-            directorName: n,
-            directorSex:  sx
-        });
-
-        this.log('users', 'Director "'+n+'" criado',
-            {uid:cr.user.uid, school:s, sex:sx, titulo:S.getDirTitle(sx)});
-        this.toast('Director criado! ⚠️ Faça login novamente como Admin.','success');
-        this.cModal();
-    }catch(er){
-        bt.disabled = false;
-        bt.innerHTML = '<span class="material-icons-outlined">save</span>Criar Director';
-        var m = {
-            'auth/email-already-in-use':'Email já em uso',
-            'auth/weak-password':'Senha fraca'
-        };
-        this.toast(m[er.code] || er.message,'error');
-    }
+var _origStaffPasses = S._genStaffPassesPDF;
+S._genStaffPassesPDF = async function(staffList, esc){
+    var dirSex = await S._getDirectorSex();
+    esc._dirTitleFull = S._dirTitle(dirSex);
+    esc.directorName = await S._getCurrentDirector();
+    await _origStaffPasses.call(this, staffList, esc);
 };
 
-// ================================================================
-// § 6 — OVERRIDE mdEditProfile: perfil completo para o Director
-// ================================================================
-S.mdEditProfile = function(){
-    var d = this.ud || {};
-    var isDir = d.role === 'diretor';
-
-    // ---- Perfil simples para cargos que não são Director ----
-    if(!isDir){
-        this.oModal('Editar Perfil',`
-            <form onsubmit="return false">
-                <div style="display:flex;justify-content:center;margin-bottom:14px">
-                    <div class="ph-up" onclick="document.getElementById('prPh').click()">
-                        <span class="material-icons-outlined" style="color:#9CA3AF;font-size:1.3rem">photo_camera</span>
-                        <img id="prPhPv" ${d.photo?`src="${d.photo}"`:'style="display:none"'}>
-                    </div>
-                    <input type="file" id="prPh" accept="image/*" style="display:none"
-                        onchange="S.prevPh(this,'prPhPv')">
-                </div>
-                <div class="g2">
-                    <div class="fg gc2"><label class="fl">Nome</label>
-                        <input type="text" id="pr_n" class="fi" value="${d.name||''}"></div>
-                    <div class="fg"><label class="fl">Telefone</label>
-                        <input type="tel" id="pr_p" class="fi" value="${d.phone||''}"></div>
-                </div>
-            </form>`,
-            `<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
-             <button class="btn btn-r" onclick="S.saveProfile()">
-                 <span class="material-icons-outlined">save</span>Guardar</button>`,
-            '460px');
-        return;
-    }
-
-    // ---- Perfil completo para Director ----
-    var sexOpts = `
-        <option value="" ${!d.sex?'selected':''}>Seleccionar...</option>
-        <option value="Masculino" ${d.sex==='Masculino'?'selected':''}>Masculino — Director</option>
-        <option value="Feminino"  ${d.sex==='Feminino'?'selected':''}>Feminino — Directora</option>`;
-
-    var shOpts = ['Manhã','Tarde','Noite','Integral'].map(v=>
-        `<option ${d.shift===v?'selected':''}>${v}</option>`).join('');
-
-    var tituloActual = S.getDirTitle(d.sex);
-    var tituloInfo = d.sex
-        ? `<span class="bg bg-ok" style="font-size:.65rem">${tituloActual}</span>`
-        : `<span class="bg bg-wr" style="font-size:.65rem">Sexo não definido</span>`;
-
-    this.oModal('Meu Perfil — '+tituloActual,`
-        <form onsubmit="return false" style="max-height:67vh;overflow-y:auto;padding-right:4px">
-
-            <!-- Foto -->
-            <div style="display:flex;justify-content:center;margin-bottom:16px">
-                <div class="ph-up" onclick="document.getElementById('prPh').click()"
-                     style="width:110px;height:110px">
-                    <span class="material-icons-outlined" style="color:#9CA3AF;font-size:1.6rem">photo_camera</span>
-                    <span style="font-size:.55rem;color:#9CA3AF;margin-top:2px">Alterar foto</span>
-                    <img id="prPhPv" ${d.photo?`src="${d.photo}"`:'style="display:none"'}>
-                </div>
-                <input type="file" id="prPh" accept="image/*" style="display:none"
-                    onchange="S.prevPh(this,'prPhPv')">
-            </div>
-
-            <!-- Título actual -->
-            <div style="text-align:center;margin-bottom:14px">
-                <p style="font-size:.72rem;color:#6B7280">Título nos documentos: ${tituloInfo}</p>
-            </div>
-
-            <!-- DADOS PESSOAIS -->
-            <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;padding:6px 8px;background:rgba(212,160,23,.06);border-radius:7px">
-                <span class="material-icons-outlined" style="font-size:1rem;color:#D4A017">person</span>
-                <span style="font-size:.7rem;font-weight:700;color:#D4A017;text-transform:uppercase;letter-spacing:1px">Dados Pessoais</span>
-            </div>
-            <div class="g2">
-                <div class="fg gc2"><label class="fl">Nome Completo *</label>
-                    <input type="text" id="pr_n" class="fi" value="${d.name||''}" required></div>
-
-                <div class="fg">
-                    <label class="fl">Sexo
-                        <span style="color:#D4A017;font-size:.63rem;margin-left:3px">(define título nos docs)</span>
-                    </label>
-                    <select id="pr_sx" class="fs"
-                        onchange="document.getElementById('pr_titulo_preview').textContent=S.getDirTitle(this.value)">
-                        ${sexOpts}
-                    </select>
-                </div>
-
-                <div class="fg">
-                    <label class="fl">Pré-visualização do título</label>
-                    <div style="padding:8px 11px;border:2px solid #E5E7EB;border-radius:8px;font-size:.82rem;font-weight:700;color:#D4A017"
-                         id="pr_titulo_preview">${tituloActual}</div>
-                </div>
-
-                <div class="fg"><label class="fl">Data de Nascimento</label>
-                    <input type="date" id="pr_db" class="fi" value="${d.dob||''}"></div>
-                <div class="fg"><label class="fl">Bilhete de Identidade (BI)</label>
-                    <input type="text" id="pr_bi" class="fi" value="${d.bi||''}"></div>
-                <div class="fg"><label class="fl">NIF</label>
-                    <input type="text" id="pr_nf" class="fi" value="${d.nif||''}"></div>
-            </div>
-
-            <!-- DADOS PROFISSIONAIS -->
-            <div style="display:flex;align-items:center;gap:6px;margin:14px 0 8px;padding:6px 8px;background:rgba(204,27,43,.06);border-radius:7px">
-                <span class="material-icons-outlined" style="font-size:1rem;color:#CC1B2B">work</span>
-                <span style="font-size:.7rem;font-weight:700;color:#CC1B2B;text-transform:uppercase;letter-spacing:1px">Dados Profissionais</span>
-            </div>
-            <div class="g2">
-                <div class="fg gc2"><label class="fl">Formação Académica</label>
-                    <input type="text" id="pr_fm" class="fi" value="${d.formacao||''}"
-                        placeholder="Ex: Licenciatura em Gestão Escolar"></div>
-                <div class="fg"><label class="fl">Nº Mecânico</label>
-                    <input type="text" id="pr_mc" class="fi" value="${d.mecNumber||''}"></div>
-                <div class="fg"><label class="fl">Turno</label>
-                    <select id="pr_sh" class="fs">
-                        <option value="">—</option>${shOpts}
-                    </select>
-                </div>
-                <div class="fg"><label class="fl">Departamento / Função</label>
-                    <input type="text" id="pr_fn" class="fi" value="${d.funcao||''}"
-                        placeholder="Direcção Geral"></div>
-            </div>
-
-            <!-- CONTACTOS -->
-            <div style="display:flex;align-items:center;gap:6px;margin:14px 0 8px;padding:6px 8px;background:rgba(37,99,235,.06);border-radius:7px">
-                <span class="material-icons-outlined" style="font-size:1rem;color:#2563EB">contact_phone</span>
-                <span style="font-size:.7rem;font-weight:700;color:#2563EB;text-transform:uppercase;letter-spacing:1px">Contactos & Morada</span>
-            </div>
-            <div class="g2">
-                <div class="fg"><label class="fl">Telefone</label>
-                    <input type="tel" id="pr_p" class="fi" value="${d.phone||''}" placeholder="+244"></div>
-                <div class="fg"><label class="fl">Email Pessoal</label>
-                    <input type="email" id="pr_ep" class="fi"
-                        value="${d.emailPersonal||''}"></div>
-                <div class="fg gc2"><label class="fl">Morada</label>
-                    <input type="text" id="pr_ad" class="fi" value="${d.address||''}"></div>
-            </div>
-
-        </form>
-    `,`<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>
-       <button class="btn btn-r" onclick="S.saveProfile()" id="prSvBt">
-           <span class="material-icons-outlined">save</span>Guardar Perfil</button>`,
-    '700px');
-};
-
-// ================================================================
-// § 7 — OVERRIDE saveProfile: guardar todos os campos do Director
-// ================================================================
+// =============================================
+// 9. FIX saveProfile — Foto
+// =============================================
 S.saveProfile = async function(){
-    var n = (document.getElementById('pr_n')?.value || '').trim();
-    var p = (document.getElementById('pr_p')?.value || '').trim();
-    if(!n) return this.toast('Nome é obrigatório','error');
+    var nameEl = document.getElementById('pr_n');
+    var phoneEl = document.getElementById('pr_p');
+    var n = nameEl ? nameEl.value.trim() : '';
+    var p = phoneEl ? phoneEl.value.trim() : '';
 
-    var isDir = this.ud?.role === 'diretor';
-    var bt = document.getElementById('prSvBt');
-    if(bt){ bt.disabled = true; bt.innerHTML = '<span class="material-icons-outlined" style="animation:spin 1s linear infinite;font-size:.9rem">hourglass_empty</span>Guardando...'; }
+    try {
+        var upd = { name: n, phone: p, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
 
-    try{
-        var u = {
-            name:      n,
-            phone:     p,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        };
-
-        // Campos extras — só para Director
-        if(isDir){
-            u.sex         = document.getElementById('pr_sx')?.value  || '';
-            u.dob         = document.getElementById('pr_db')?.value  || '';
-            u.bi          = (document.getElementById('pr_bi')?.value  || '').trim();
-            u.nif         = (document.getElementById('pr_nf')?.value  || '').trim();
-            u.formacao    = (document.getElementById('pr_fm')?.value  || '').trim();
-            u.mecNumber   = (document.getElementById('pr_mc')?.value  || '').trim();
-            u.shift       = document.getElementById('pr_sh')?.value  || '';
-            u.funcao      = (document.getElementById('pr_fn')?.value  || '').trim();
-            u.address     = (document.getElementById('pr_ad')?.value  || '').trim();
-            u.emailPersonal = (document.getElementById('pr_ep')?.value || '').trim();
-        }
-
-        // Foto
         var phI = document.getElementById('prPh');
-        if(phI && phI.files.length > 0){
-            var c = await this.compress(phI.files[0], 300, .7);
-            var ref = storage.ref('users/photos/' + this.user.uid);
-            await ref.putString(c, 'data_url');
-            u.photo = await ref.getDownloadURL();
+        if(phI && phI.files && phI.files.length > 0){
+            try { upd.photo = await S._processPhoto(phI.files[0]); } catch(e){ console.log('Foto perfil:', e); }
         }
 
-        // Guardar no Firestore
-        await db.collection('users').doc(this.user.uid).update(u);
+        await db.collection('users').doc(S.user.uid).update(upd);
+        S.ud.name = n; S.ud.phone = p;
+        if(upd.photo) S.ud.photo = upd.photo;
 
-        // Se for Director: actualizar também o documento da escola
-        if(isDir && this.ud.tenantId){
-            var schoolUpd = {
-                directorName: n,
-                directorSex:  u.sex !== undefined ? u.sex : (this.ud.sex || ''),
-                updatedAt:    firebase.firestore.FieldValue.serverTimestamp()
-            };
-            await db.collection('schools').doc(this.ud.tenantId).update(schoolUpd);
-            if(this.school){
-                this.school.directorName = n;
-                this.school.directorSex  = schoolUpd.directorSex;
-            }
-            // Actualizar título global imediatamente
-            S._currentDirTitle = S.getDirTitle(schoolUpd.directorSex);
-        }
-
-        // Actualizar estado local (S.ud)
-        Object.assign(this.ud, u);
-
-        // Actualizar sidebar — nome
-        var sbNm = document.getElementById('sbNm');
-        if(sbNm) sbNm.textContent = n;
-
-        // Actualizar sidebar — cargo (Director/Directora Geral)
-        var sbRl = document.getElementById('sbRl');
-        if(sbRl){
-            sbRl.textContent = isDir
-                ? S.getDirTitle(u.sex || this.ud.sex, true)
-                : (S.RL[this.ud.role] || this.ud.role || '');
-        }
-
-        // Actualizar sidebar — avatar
+        var sbN = document.getElementById('sbNm');
+        if(sbN) sbN.textContent = n;
         var av = document.getElementById('sbAv');
         if(av){
-            if(u.photo) av.innerHTML = `<img src="${u.photo}">`;
-            else av.textContent = n.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+            if(upd.photo) av.innerHTML = '<img src="' + upd.photo + '" style="width:100%;height:100%;object-fit:cover">';
+            else av.textContent = n.split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
         }
 
-        this.toast('Perfil actualizado com sucesso!','success');
-        this.cModal();
-    }catch(er){
-        if(bt){ bt.disabled=false; bt.innerHTML='<span class="material-icons-outlined">save</span>Guardar Perfil'; }
-        this.toast(er.message,'error');
-    }
+        S.toast('Perfil actualizado!','success');
+        S.cModal();
+    } catch(e){ S.toast('Erro: ' + e.message,'error'); }
 };
 
-// ================================================================
-// § 8 — WRAPPER buildSB: sidebar mostra Director / Directora Geral
-// ================================================================
-(function(){
-    var _orig = S.buildSB;
-    S.buildSB = function(){
-        _orig.call(this);
-        if(this.ud?.role === 'diretor'){
-            var sbRl = document.getElementById('sbRl');
-            if(sbRl) sbRl.textContent = S.getDirTitle(this.ud.sex, true);
-        }
-    };
-})();
-
-// ================================================================
-// § 9 — OVERRIDE pgSettings: mostrar perfil completo do Director
-//         (painel de configurações já usa mdEditProfile,
-//          apenas actualizamos a visualização de informações)
-// ================================================================
-(function(){
-    var _origSettings = S.pgSettings;
-    S.pgSettings = function(){
-        _origSettings.call(this);
-
-        // Se for Director, enriquecer a secção "Meu Perfil" com mais campos
-        if(this.ud?.role !== 'diretor') return;
-        var d = this.ud;
-        var tituloLabel = S.getDirTitle(d.sex);
-
-        // Substituir conteúdo do card "Meu Perfil" com versão completa
-        setTimeout(function(){
-            var cards = document.querySelectorAll('.cd');
-            cards.forEach(function(card){
-                if(card.textContent.includes('Meu Perfil')){
-                    var sexBg = d.sex === 'Masculino'
-                        ? '<span class="bg bg-in">Masculino</span>'
-                        : d.sex === 'Feminino'
-                        ? '<span class="bg" style="background:rgba(236,72,153,.1);color:#DB2777">Feminino</span>'
-                        : '<span class="bg bg-wr">Não definido</span>';
-
-                    card.innerHTML = `
-                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-                            <h3 style="font-weight:700;font-size:.9rem">Meu Perfil</h3>
-                            <span class="bg bg-ok" style="font-size:.68rem">${tituloLabel}</span>
-                        </div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:.82rem">
-                            <p><strong>Nome:</strong> ${d.name||'—'}</p>
-                            <p><strong>Email:</strong> ${d.email||'—'}</p>
-                            <p><strong>Sexo:</strong> ${sexBg}</p>
-                            <p><strong>Telefone:</strong> ${d.phone||'—'}</p>
-                            <p><strong>BI:</strong> ${d.bi||'—'}</p>
-                            <p><strong>NIF:</strong> ${d.nif||'—'}</p>
-                            <p><strong>Nascimento:</strong> ${d.dob||'—'}</p>
-                            <p><strong>Nº Mecânico:</strong> ${d.mecNumber||'—'}</p>
-                            <p><strong>Formação:</strong> ${d.formacao||'—'}</p>
-                            <p><strong>Turno:</strong> ${d.shift||'—'}</p>
-                            <p style="grid-column:span 2"><strong>Morada:</strong> ${d.address||'—'}</p>
-                        </div>
-                        <button class="btn btn-o btn-s mt-m" onclick="S.mdEditProfile()">
-                            <span class="material-icons-outlined" style="font-size:.85rem">edit</span>
-                            Editar Perfil Completo
-                        </button>`;
-                }
-            });
-        }, 100);
-    };
-})();
-
-console.log('[SGE-NG Patch] ✅ Reconhecimento de género do Director activo.');
-console.log('[SGE-NG Patch]    → getDirTitle(sex) disponível globalmente');
-console.log('[SGE-NG Patch]    → Perfil completo do Director habilitado');
-console.log('[SGE-NG Patch]    → jsPDF interceptor activo para rótulos de assinatura');
+console.log('CORRECAO DEFINITIVA:');
+console.log('  Fotos: processamento robusto sem bloquear');
+console.log('  Genero: Director/Directora em TODOS documentos');
+console.log('  SubDir: Subdirector/Subdirectora Pedagogico/a');
+console.log('  Busca sexo do Firestore (escola + perfil)');
 </script>
-<!-- ================================================================
-     FIM PATCH Director
-     ================================================================ -->
-
+<!-- ================================================
+     FIM CORRECAO
+     ================================================ -->
 </body>
 </html>
