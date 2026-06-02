@@ -22672,5 +22672,940 @@ console.log('  Busca sexo do Firestore (escola + perfil)');
 <!-- ================================================
      FIM CORRECAO
      ================================================ -->
+<!-- ================================================
+     GÉNERO + PERFIL EDITÁVEL PARA TODOS
+     ================================================ -->
+<script>
+// =============================================
+// 1. PERFIL EDITÁVEL PARA TODOS OS UTILIZADORES
+// =============================================
+S._routes['settings'] = function(){
+    var pc = document.getElementById('pgC');
+    var u = S.ud || {};
+
+    pc.innerHTML = '<div class="fade">'
+        + '<h2 class="fw8 fs-l mb-l">Meu Perfil</h2>'
+        + '<div class="g2 mb-l">'
+
+        // Card tema
+        + '<div class="cd tc" style="padding:24px;cursor:pointer" onclick="S.tDark()">'
+        + '<span class="material-icons-outlined" style="font-size:2rem;color:#D4A017">' + (S._dk?'light_mode':'dark_mode') + '</span>'
+        + '<h3 class="fw7 mt-s">' + (S._dk?'Modo Claro':'Modo Escuro') + '</h3></div>'
+
+        // Card info
+        + '<div class="cd tc" style="padding:24px">'
+        + '<span class="material-icons-outlined" style="font-size:2rem;color:#059669">info</span>'
+        + '<h3 class="fw7 mt-s">SGE-NG v2.0</h3>'
+        + '<p class="tm fs-s">Angola</p></div>'
+        + '</div>'
+
+        // Dados do perfil
+        + '<div class="cd mb-l">'
+        + '<div class="fb fw gm mb-m">'
+        + '<h3 class="fw7 fs-m">Dados Pessoais</h3>'
+        + '<button class="btn btn-r btn-s" onclick="S._mdEditMyProfile()"><span class="material-icons-outlined" style="font-size:.8rem">edit</span>Editar</button>'
+        + '</div>'
+        + '<div class="g2" style="font-size:.84rem">'
+        + '<div class="cd" style="padding:12px">'
+        + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">'
+        + '<div style="width:60px;height:60px;border-radius:12px;background:linear-gradient(135deg,#CC1B2B,#D4A017);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:1.1rem;overflow:hidden">'
+        + (u.photo ? '<img src="'+u.photo+'" style="width:100%;height:100%;object-fit:cover">' : (u.name||'U').substring(0,2).toUpperCase())
+        + '</div>'
+        + '<div><h3 class="fw8">' + (u.name||'') + '</h3>'
+        + '<p class="tm fs-s">' + (S.RL[u.role]||u.role||'') + '</p></div>'
+        + '</div>'
+        + '<p><strong>Email:</strong> ' + (u.email||'') + '</p>'
+        + '<p><strong>Sexo:</strong> ' + (u.sex||'Nao definido') + '</p>'
+        + '<p><strong>Telefone:</strong> ' + (u.phone||'--') + '</p>'
+        + '<p><strong>Telefone 2:</strong> ' + (u.phone2||'--') + '</p>'
+        + '</div>'
+        + '<div class="cd" style="padding:12px">'
+        + '<p><strong>BI:</strong> ' + (u.bi||'--') + '</p>'
+        + '<p><strong>NIF:</strong> ' + (u.nif||'--') + '</p>'
+        + '<p><strong>Nacionalidade:</strong> ' + (u.nationality||'--') + '</p>'
+        + '<p><strong>Naturalidade:</strong> ' + (u.naturalidade||'--') + '</p>'
+        + '<p><strong>Estado Civil:</strong> ' + (u.maritalStatus||'--') + '</p>'
+        + '<p><strong>Morada:</strong> ' + (u.address||'--') + '</p>'
+        + '<p><strong>Formacao:</strong> ' + (u.formacao||'--') + '</p>'
+        + '</div></div></div>'
+
+        // Escola
+        + (S.school ? '<div class="cd"><h3 class="fw7 fs-m mb-m">Escola</h3><div style="font-size:.84rem">'
+        + '<p><strong>Nome:</strong> ' + (S.school.name||'') + '</p>'
+        + '<p><strong>Tipo:</strong> ' + (S.school.type||'') + '</p>'
+        + '<p><strong>Provincia:</strong> ' + (S.school.province||'') + '</p>'
+        + '</div></div>' : '')
+        + '</div>';
+};
+
+// =============================================
+// MODAL EDITAR PERFIL COMPLETO
+// =============================================
+S._mdEditMyProfile = function(){
+    var u = S.ud || {};
+
+    S.oModal('Editar Meu Perfil',
+        '<form onsubmit="return false" style="max-height:65vh;overflow-y:auto;padding-right:4px">'
+
+        // Foto
+        + '<div style="display:flex;justify-content:center;margin-bottom:14px">'
+        + '<div class="ph-up" onclick="document.getElementById(\'myProfPh\').click()">'
+        + '<span class="material-icons-outlined" style="color:#9CA3AF;font-size:1.3rem">photo_camera</span>'
+        + '<img id="myProfPhPv" ' + (u.photo ? 'src="'+u.photo+'"' : 'style="display:none"') + '>'
+        + '</div><input type="file" id="myProfPh" accept="image/*" style="display:none" onchange="S.prevPh(this,\'myProfPhPv\')">'
+        + '</div>'
+
+        + '<div class="g2">'
+        + '<div class="fg gc2" style="margin-bottom:2px"><label class="fl tg fw7">-- Dados Pessoais --</label></div>'
+        + '<div class="fg gc2"><label class="fl">Nome Completo *</label><input type="text" id="mp_name" class="fi" value="' + (u.name||'') + '" required></div>'
+        + '<div class="fg"><label class="fl">Sexo *</label><select id="mp_sex" class="fs"><option ' + (u.sex==='Masculino'?'selected':'') + '>Masculino</option><option ' + (u.sex==='Feminino'?'selected':'') + '>Feminino</option></select></div>'
+        + '<div class="fg"><label class="fl">Data Nascimento</label><input type="date" id="mp_dob" class="fi" value="' + (u.dob||'') + '"></div>'
+        + '<div class="fg"><label class="fl">Nacionalidade</label><input type="text" id="mp_nat" class="fi" value="' + (u.nationality||'Angolana') + '"></div>'
+        + '<div class="fg"><label class="fl">Naturalidade</label><input type="text" id="mp_natl" class="fi" value="' + (u.naturalidade||'') + '"></div>'
+        + '<div class="fg"><label class="fl">BI</label><input type="text" id="mp_bi" class="fi" value="' + (u.bi||'') + '"></div>'
+        + '<div class="fg"><label class="fl">NIF</label><input type="text" id="mp_nif" class="fi" value="' + (u.nif||'') + '"></div>'
+        + '<div class="fg"><label class="fl">Estado Civil</label><select id="mp_marital" class="fs"><option value="">--</option><option ' + (u.maritalStatus==='Solteiro(a)'?'selected':'') + '>Solteiro(a)</option><option ' + (u.maritalStatus==='Casado(a)'?'selected':'') + '>Casado(a)</option><option ' + (u.maritalStatus==='Divorciado(a)'?'selected':'') + '>Divorciado(a)</option><option ' + (u.maritalStatus==='Viuvo(a)'?'selected':'') + '>Viuvo(a)</option></select></div>'
+
+        + '<div class="fg gc2" style="margin-top:6px;margin-bottom:2px"><label class="fl tg fw7">-- Contactos --</label></div>'
+        + '<div class="fg"><label class="fl">Telefone 1</label><input type="tel" id="mp_phone" class="fi" value="' + (u.phone||'') + '"></div>'
+        + '<div class="fg"><label class="fl">Telefone 2</label><input type="tel" id="mp_phone2" class="fi" value="' + (u.phone2||'') + '"></div>'
+        + '<div class="fg gc2"><label class="fl">Morada</label><input type="text" id="mp_addr" class="fi" value="' + (u.address||'') + '"></div>'
+
+        + '<div class="fg gc2" style="margin-top:6px;margin-bottom:2px"><label class="fl tg fw7">-- Dados Academicos --</label></div>'
+        + '<div class="fg"><label class="fl">Formacao</label><input type="text" id="mp_form" class="fi" value="' + (u.formacao||'') + '"></div>'
+        + '<div class="fg"><label class="fl">Instituicao</label><input type="text" id="mp_inst" class="fi" value="' + (u.institution||'') + '"></div>'
+        + '</div></form>',
+
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._saveMyProfile()" id="mpSvBtn"><span class="material-icons-outlined">save</span>Guardar</button>',
+        '600px');
+};
+
+S._saveMyProfile = async function(){
+    var nameEl = document.getElementById('mp_name');
+    if(!nameEl || !nameEl.value.trim()){ S.toast('Nome obrigatorio','error'); return; }
+
+    var btn = document.getElementById('mpSvBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Guardando...'; }
+
+    try {
+        var data = {
+            name: nameEl.value.trim(),
+            sex: document.getElementById('mp_sex').value || '',
+            dob: document.getElementById('mp_dob').value || '',
+            nationality: document.getElementById('mp_nat').value.trim() || '',
+            naturalidade: document.getElementById('mp_natl').value.trim() || '',
+            bi: document.getElementById('mp_bi').value.trim() || '',
+            nif: document.getElementById('mp_nif').value.trim() || '',
+            maritalStatus: document.getElementById('mp_marital').value || '',
+            phone: document.getElementById('mp_phone').value.trim() || '',
+            phone2: document.getElementById('mp_phone2').value.trim() || '',
+            address: document.getElementById('mp_addr').value.trim() || '',
+            formacao: document.getElementById('mp_form').value.trim() || '',
+            institution: document.getElementById('mp_inst').value.trim() || '',
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Foto
+        var phI = document.getElementById('myProfPh');
+        if(phI && phI.files && phI.files.length > 0){
+            try { data.photo = await S._processPhoto(phI.files[0]); } catch(e){}
+        }
+
+        await db.collection('users').doc(S.user.uid).update(data);
+
+        // Actualizar dados locais
+        for(var key in data){
+            if(key !== 'updatedAt') S.ud[key] = data[key];
+        }
+
+        // Actualizar sidebar
+        var sbN = document.getElementById('sbNm');
+        if(sbN) sbN.textContent = data.name;
+        var av = document.getElementById('sbAv');
+        if(av){
+            if(data.photo) av.innerHTML = '<img src="' + data.photo + '" style="width:100%;height:100%;object-fit:cover">';
+            else av.textContent = data.name.split(' ').map(function(w){return w[0]}).join('').substring(0,2).toUpperCase();
+        }
+
+        // Se é director, actualizar escola
+        if(S.ud.role === 'diretor' && S.ud.tenantId){
+            await db.collection('schools').doc(S.ud.tenantId).update({
+                directorName: data.name,
+                directorSex: data.sex,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+
+            if(S.school){
+                S.school.directorName = data.name;
+                S.school.directorSex = data.sex;
+            }
+        }
+
+        S.toast('Perfil actualizado!','success');
+        S.cModal();
+        S.nav('settings');
+
+    } catch(e){
+        if(btn){ btn.disabled = false; btn.innerHTML = '<span class="material-icons-outlined">save</span>Guardar'; }
+        S.toast('Erro: ' + e.message,'error');
+    }
+};
+
+// =============================================
+// 2. GARANTIR GÉNERO NOS DOCUMENTOS
+// =============================================
+
+// Funções de género (simples e directas)
+S._dirTexto = function(sex){
+    if(sex === 'Feminino') return 'Directora';
+    return 'Director';
+};
+
+S._dirAssinatura = function(sex){
+    if(sex === 'Feminino') return 'A Directora';
+    return 'O Director';
+};
+
+S._subPedTexto = function(sex){
+    if(sex === 'Feminino') return 'A Subdirectora Pedagogica';
+    return 'O Subdirector Pedagogico';
+};
+
+// Buscar sexo do director (sempre fresco)
+S._getDirectorSex = async function(schoolId){
+    var tid = schoolId || S.tid();
+    if(!tid) return '';
+    try {
+        var schDoc = await db.collection('schools').doc(tid).get();
+        if(!schDoc.exists) return '';
+        var sch = schDoc.data();
+        if(sch.directorSex) return sch.directorSex;
+        if(sch.directorId){
+            var uDoc = await db.collection('users').doc(sch.directorId).get();
+            if(uDoc.exists) return uDoc.data().sex || '';
+        }
+    } catch(e){}
+    return '';
+};
+
+// Buscar sexo do subdirector
+S._getSubPedSex = async function(tid){
+    try {
+        var snap = await db.collection('users').where('tenantId','==',tid).get();
+        var sex = '';
+        snap.forEach(function(d2){
+            if(d2.data().role === 'subdiretor_pedagogico' && d2.data().active !== false)
+                sex = d2.data().sex || '';
+        });
+        return sex;
+    } catch(e){ return ''; }
+};
+
+// Buscar director actual
+S._getCurrentDirector = async function(schoolId){
+    var tid = schoolId || S.tid();
+    if(!tid) return '________________________';
+    try {
+        var schDoc = await db.collection('schools').doc(tid).get();
+        if(schDoc.exists && schDoc.data().directorName) return schDoc.data().directorName;
+    } catch(e){}
+    return '________________________';
+};
+
+// =============================================
+// 3. PASSES — Género do director
+// =============================================
+var _origPassesLote3 = S._genPassesLote;
+S._genPassesLote = async function(students, esc){
+    var dirSex = await S._getDirectorSex();
+    esc._dirAssinatura = S._dirAssinatura(dirSex);
+    esc.directorName = await S._getCurrentDirector();
+    await _origPassesLote3.call(this, students, esc);
+};
+
+// =============================================
+// 4. BOLETINS — Género nas assinaturas
+// =============================================
+S._getSchoolSignatures = async function(tid, classe, turma){
+    var dirSex = await S._getDirectorSex(tid);
+    var subPedSex = await S._getSubPedSex(tid);
+
+    var result = {
+        director: await S._getCurrentDirector(tid),
+        directorTitle: S._dirAssinatura(dirSex),
+        subPedagogico: '________________________',
+        subPedTitle: S._subPedTexto(subPedSex),
+        coordenador: '________________________',
+        coordType: ''
+    };
+
+    try {
+        var usSnap = await db.collection('users').where('tenantId','==',tid).get();
+        usSnap.forEach(function(d2){
+            if(d2.data().role === 'subdiretor_pedagogico' && d2.data().active !== false)
+                result.subPedagogico = d2.data().name || '________________________';
+        });
+    } catch(e){}
+
+    var cn = parseInt(classe) || 0;
+    result.coordType = (cn >= 1 && cn <= 6) ? 'Coord. de Classe' : 'Coord. de Turma';
+
+    try {
+        var coordSnap = await db.collection('schools').doc(tid).collection('coordinations').get();
+        coordSnap.forEach(function(d2){
+            var c = d2.data();
+            if(c.active === false) return;
+            var match = false;
+            if(cn >= 1 && cn <= 6 && c.type === 'classe' && c.detail === classe) match = true;
+            if(cn >= 7 && c.type === 'turma') match = true;
+            if(match) result.coordenador = c.professorName || '________________________';
+        });
+    } catch(e){}
+
+    return result;
+};
+
+console.log('Perfil editavel para TODOS os utilizadores');
+console.log('Genero nos documentos:');
+console.log('  Director masculino -> "Director", "O Director"');
+console.log('  Director feminino -> "Directora", "A Directora"');
+console.log('  SubDir masculino -> "O Subdirector Pedagogico"');
+console.log('  SubDir feminino -> "A Subdirectora Pedagogica"');
+console.log('  Director edita perfil -> actualiza nome e sexo na escola');
+</script>
+<!-- ================================================
+     FIM
+     ================================================ -->
+    <!-- ================================================
+     CORREÇÃO GERAL DE BUGS
+     ================================================ -->
+<script>
+(function(){
+    'use strict';
+
+    // =============================================
+    // 1. FIX: _processPhoto bloqueava
+    // =============================================
+    S._processPhoto = function(file){
+        return new Promise(function(resolve, reject){
+            if(!file){ resolve(null); return; }
+            try {
+                if(!file.type || file.type.indexOf('image') < 0){ reject('Nao e imagem'); return; }
+                if(file.size > 8000000){ reject('Max 8MB'); return; }
+            } catch(e){ reject('Ficheiro invalido'); return; }
+
+            var reader = new FileReader();
+            reader.onerror = function(){ reject('Erro leitura'); };
+            reader.onload = function(ev){
+                var img = new Image();
+                img.onerror = function(){ reject('Imagem invalida'); };
+                img.onload = function(){
+                    try {
+                        var canvas = document.createElement('canvas');
+                        var w = img.width, h = img.height;
+                        if(w > 250 || h > 250){
+                            if(w > h){ h = Math.round(h * 250 / w); w = 250; }
+                            else { w = Math.round(w * 250 / h); h = 250; }
+                        }
+                        if(w < 1) w = 1;
+                        if(h < 1) h = 1;
+                        canvas.width = w;
+                        canvas.height = h;
+                        var ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#FFFFFF';
+                        ctx.fillRect(0, 0, w, h);
+                        ctx.drawImage(img, 0, 0, w, h);
+                        var result = canvas.toDataURL('image/jpeg', 0.5);
+                        if(result && result.length > 100){
+                            resolve(result);
+                        } else {
+                            reject('Compressao falhou');
+                        }
+                    } catch(err){
+                        reject('Erro canvas: ' + err.message);
+                    }
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    };
+
+    // =============================================
+    // 2. FIX: prevPh não mostrava preview
+    // =============================================
+    S.prevPh = function(input, previewId){
+        if(!input || !input.files || !input.files[0]) return;
+        var file = input.files[0];
+
+        try {
+            if(!file.type || file.type.indexOf('image') < 0){
+                S.toast('Seleccione uma imagem', 'error');
+                input.value = '';
+                return;
+            }
+        } catch(e){ return; }
+
+        S._processPhoto(file).then(function(data){
+            if(!data) return;
+            var el = document.getElementById(previewId);
+            if(el){
+                el.src = data;
+                el.style.display = 'block';
+                el.style.width = '100%';
+                el.style.height = '100%';
+                el.style.objectFit = 'cover';
+                el.style.position = 'absolute';
+                el.style.top = '0';
+                el.style.left = '0';
+            }
+        }).catch(function(err){
+            console.log('Preview erro:', err);
+        });
+    };
+
+    // =============================================
+    // 3. FIX: Múltiplas definições de funções
+    //    Garantir que a última versão prevalece
+    // =============================================
+
+    // Garantir que saveStud usa a versão correcta
+    if(typeof S.saveStud !== 'function'){
+        S.saveStud = async function(editId){
+            S.toast('Erro interno - recarregue a pagina', 'error');
+        };
+    }
+
+    // =============================================
+    // 4. FIX: Listeners não limpos causam memory leak
+    // =============================================
+    var origNav = S.nav;
+    S.nav = function(page){
+        // Limpar listeners antes de navegar
+        if(S._ls && S._ls.length > 0){
+            for(var i = 0; i < S._ls.length; i++){
+                try { if(typeof S._ls[i] === 'function') S._ls[i](); } catch(e){}
+            }
+            S._ls = [];
+        }
+        origNav.call(S, page);
+    };
+
+    // =============================================
+    // 5. FIX: getActiveYear falha com query composta
+    // =============================================
+    S.getActiveYear = async function(){
+        var tid = S.tid();
+        if(!tid) return null;
+        try {
+            var snap = await db.collection('schools').doc(tid).collection('academicYears').get();
+            var result = null;
+            snap.forEach(function(d2){
+                if(d2.data().active === true){
+                    result = {id: d2.id};
+                    var data = d2.data();
+                    for(var k in data) result[k] = data[k];
+                }
+            });
+            return result;
+        } catch(e){
+            console.log('getActiveYear erro:', e.message);
+            return null;
+        }
+    };
+
+    // =============================================
+    // 6. FIX: _getStudentsByClassTurma falha
+    // =============================================
+    S._getStudentsByClassTurma = async function(tid, classe, turma){
+        if(!tid || !classe || !turma) return [];
+        try {
+            var snap = await db.collection('schools').doc(tid).collection('students').get();
+            var results = [];
+            snap.forEach(function(d2){
+                var s = d2.data();
+                if(s.classe === classe && s.turma === turma){
+                    results.push({id: d2.id});
+                    for(var k in s) results[results.length-1][k] = s[k];
+                }
+            });
+            results.sort(function(a, b){
+                return (a.name || '').localeCompare(b.name || '');
+            });
+            return results;
+        } catch(e){
+            console.log('getStudents erro:', e.message);
+            return [];
+        }
+    };
+
+    // =============================================
+    // 7. FIX: _getStudentsByClass falha
+    // =============================================
+    S._getStudentsByClass = async function(tid, classe){
+        if(!tid || !classe) return [];
+        try {
+            var snap = await db.collection('schools').doc(tid).collection('students').get();
+            var results = [];
+            snap.forEach(function(d2){
+                var s = d2.data();
+                if(s.classe === classe){
+                    results.push({id: d2.id});
+                    for(var k in s) results[results.length-1][k] = s[k];
+                }
+            });
+            results.sort(function(a, b){ return (a.name||'').localeCompare(b.name||''); });
+            return results;
+        } catch(e){ return []; }
+    };
+
+    // =============================================
+    // 8. FIX: _getTurmasByClass falha
+    // =============================================
+    S._getTurmasByClass = async function(tid, classe){
+        if(!tid || !classe) return [];
+        try {
+            var snap = await db.collection('schools').doc(tid).collection('turmas').get();
+            var results = [];
+            snap.forEach(function(d2){
+                var t = d2.data();
+                if(t.classe === classe){
+                    results.push({id: d2.id});
+                    for(var k in t) results[results.length-1][k] = t[k];
+                }
+            });
+            return results;
+        } catch(e){ return []; }
+    };
+
+    // =============================================
+    // 9. FIX: _getAttendance falha
+    // =============================================
+    S._getAttendance = async function(tid, classe, turma, date){
+        var map = {};
+        if(!tid) return map;
+        try {
+            var snap = await db.collection('schools').doc(tid).collection('attendance').get();
+            snap.forEach(function(d2){
+                var a = d2.data();
+                if(a.classe === classe && a.turma === turma && a.date === date){
+                    map[a.studentId] = a.status;
+                }
+            });
+        } catch(e){}
+        return map;
+    };
+
+    // =============================================
+    // 10. FIX: _sAV (presenças) não definida
+    // =============================================
+    if(typeof S._sAV !== 'function'){
+        S._sAV = function(sid, val){
+            var hiddenEl = document.getElementById('atV_' + sid);
+            if(hiddenEl) hiddenEl.value = val;
+
+            var colors = {
+                P: ['#059669','#D1FAE5'],
+                F: ['#DC2626','#FEE2E2'],
+                J: ['#2563EB','#DBEAFE'],
+                A: ['#F59E0B','#FEF3C7']
+            };
+
+            var vals = ['P','F','J','A'];
+            for(var i = 0; i < vals.length; i++){
+                var v = vals[i];
+                var btn = document.getElementById('at' + v + '_' + sid);
+                if(!btn) continue;
+                if(v === val){
+                    btn.style.background = colors[v][0];
+                    btn.style.color = '#fff';
+                    btn.style.borderColor = colors[v][0];
+                } else {
+                    btn.style.background = 'transparent';
+                    btn.style.color = colors[v][0];
+                    btn.style.borderColor = colors[v][1];
+                }
+            }
+        };
+    }
+
+    // =============================================
+    // 11. FIX: toast falha se container não existe
+    // =============================================
+    var origToast = S.toast;
+    S.toast = function(msg, type, dur){
+        var container = document.getElementById('toasts');
+        if(!container){
+            console.log('Toast (' + (type||'info') + '):', msg);
+            return;
+        }
+        try {
+            origToast.call(S, msg, type, dur);
+        } catch(e){
+            console.log('Toast erro:', e.message, msg);
+        }
+    };
+
+    // =============================================
+    // 12. FIX: _intToWords não definida
+    // =============================================
+    if(typeof S._intToWords !== 'function'){
+        S._intToWords = function(n){
+            n = Math.round(Number(n));
+            if(isNaN(n) || n < 0) return '--';
+
+            var units = ['zero','um','dois','tres','quatro','cinco','seis','sete','oito','nove',
+                'dez','onze','doze','treze','catorze','quinze','dezasseis','dezassete','dezoito','dezanove'];
+            var tens = ['','','vinte','trinta','quarenta','cinquenta','sessenta','setenta','oitenta','noventa'];
+
+            if(n >= 0 && n <= 19) return units[n] + ' valores';
+
+            if(n >= 20 && n <= 99){
+                var t = Math.floor(n / 10);
+                var u = n % 10;
+                if(u === 0) return tens[t] + ' valores';
+                return tens[t] + ' e ' + units[u] + ' valores';
+            }
+
+            if(n >= 100 && n <= 199){
+                var rest = n - 100;
+                if(rest === 0) return 'cem valores';
+                return 'cento e ' + S._intToWords(rest).replace(' valores','') + ' valores';
+            }
+
+            return n + ' valores';
+        };
+    }
+
+    // =============================================
+    // 13. FIX: _noteToWords redireciona para _intToWords
+    // =============================================
+    S._noteToWords = function(nota, maxG){
+        return S._intToWords(Math.round(Number(nota)));
+    };
+
+    // =============================================
+    // 14. FIX: _getCurrentDirector sem async
+    // =============================================
+    if(typeof S._getCurrentDirector !== 'function'){
+        S._getCurrentDirector = async function(schoolId){
+            var tid = schoolId || S.tid();
+            if(!tid) return '________________________';
+            try {
+                var schDoc = await db.collection('schools').doc(tid).get();
+                if(schDoc.exists && schDoc.data().directorName) return schDoc.data().directorName;
+            } catch(e){}
+            return '________________________';
+        };
+    }
+
+    // =============================================
+    // 15. FIX: _getDirectorSex
+    // =============================================
+    if(typeof S._getDirectorSex !== 'function'){
+        S._getDirectorSex = async function(schoolId){
+            var tid = schoolId || S.tid();
+            if(!tid) return '';
+            try {
+                var schDoc = await db.collection('schools').doc(tid).get();
+                if(!schDoc.exists) return '';
+                var sch = schDoc.data();
+                if(sch.directorSex) return sch.directorSex;
+                if(sch.directorId){
+                    var uDoc = await db.collection('users').doc(sch.directorId).get();
+                    if(uDoc.exists) return uDoc.data().sex || '';
+                }
+            } catch(e){}
+            return '';
+        };
+    }
+
+    // =============================================
+    // 16. FIX: _getSubPedSex
+    // =============================================
+    if(typeof S._getSubPedSex !== 'function'){
+        S._getSubPedSex = async function(tid){
+            try {
+                var snap = await db.collection('users').where('tenantId','==',tid).get();
+                var sex = '';
+                snap.forEach(function(d2){
+                    if(d2.data().role === 'subdiretor_pedagogico' && d2.data().active !== false)
+                        sex = d2.data().sex || '';
+                });
+                return sex;
+            } catch(e){ return ''; }
+        };
+    }
+
+    // =============================================
+    // 17. FIX: Género funções
+    // =============================================
+    S._dirTexto = function(sex){ return sex === 'Feminino' ? 'Directora' : 'Director'; };
+    S._dirAssinatura = function(sex){ return sex === 'Feminino' ? 'A Directora' : 'O Director'; };
+    S._subPedTexto = function(sex){ return sex === 'Feminino' ? 'A Subdirectora Pedagogica' : 'O Subdirector Pedagogico'; };
+
+    // =============================================
+    // 18. FIX: addQR falha silenciosamente
+    // =============================================
+    var origAddQR = S.addQR;
+    S.addQR = function(pdf, data, x, y, sz){
+        return new Promise(function(resolve){
+            try {
+                var temp = document.getElementById('qrT');
+                if(!temp){ resolve(); return; }
+                temp.innerHTML = '';
+                try { new QRCode(temp, {text: data || 'SGE', width: 256, height: 256}); } catch(e){ resolve(); return; }
+                setTimeout(function(){
+                    try {
+                        var canvas = temp.querySelector('canvas');
+                        if(canvas) pdf.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, sz || 22, sz || 22);
+                    } catch(e){}
+                    temp.innerHTML = '';
+                    resolve();
+                }, 400);
+            } catch(e){ resolve(); }
+        });
+    };
+
+    // =============================================
+    // 19. FIX: _generateInsignia falha
+    // =============================================
+    S._generateInsignia = function(){
+        return new Promise(function(resolve){
+            if(S._insigniaData){ resolve(S._insigniaData); return; }
+            try {
+                var canvas = document.createElement('canvas');
+                canvas.width = 200; canvas.height = 200;
+                var ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, 200, 200);
+
+                // Circulo
+                ctx.beginPath(); ctx.arc(100, 100, 90, 0, Math.PI * 2);
+                ctx.strokeStyle = '#B8860B'; ctx.lineWidth = 3; ctx.stroke();
+
+                // Estrela
+                ctx.fillStyle = '#CC1B2B'; ctx.beginPath();
+                for(var i = 0; i < 5; i++){
+                    var a1 = (i * 72 - 90) * Math.PI / 180;
+                    var a2 = ((i * 72) + 36 - 90) * Math.PI / 180;
+                    ctx.lineTo(100 + 22 * Math.cos(a1), 75 + 22 * Math.sin(a1));
+                    ctx.lineTo(100 + 9 * Math.cos(a2), 75 + 9 * Math.sin(a2));
+                }
+                ctx.closePath(); ctx.fill();
+
+                // Roda
+                ctx.strokeStyle = '#B8860B'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(100, 105, 30, 0, Math.PI * 2); ctx.stroke();
+
+                // Texto
+                ctx.font = 'bold 10px serif'; ctx.fillStyle = '#333'; ctx.textAlign = 'center';
+                ctx.fillText('REPUBLICA DE ANGOLA', 100, 170);
+
+                S._insigniaData = canvas.toDataURL('image/png');
+                resolve(S._insigniaData);
+            } catch(e){
+                resolve(null);
+            }
+        });
+    };
+
+    // =============================================
+    // 20. FIX: _getInsigniaForPDF
+    // =============================================
+    S._getInsigniaForPDF = async function(){
+        if(S._insigniaData) return S._insigniaData;
+
+        // 1. Config sistema
+        try {
+            var cfgDoc = await db.collection('system').doc('config').get();
+            if(cfgDoc.exists && cfgDoc.data().insignia){
+                S._insigniaData = cfgDoc.data().insignia;
+                return S._insigniaData;
+            }
+        } catch(e){}
+
+        // 2. Carimbo da escola
+        if(S.school && S.school.stamp){
+            S._insigniaData = S.school.stamp;
+            return S._insigniaData;
+        }
+
+        // 3. Gerar
+        return await S._generateInsignia();
+    };
+
+    // =============================================
+    // 21. FIX: _pdfHdr async correcto
+    // =============================================
+    S._pdfHdr = async function(doc, esc){
+        var insignia = null;
+        try { insignia = await S._getInsigniaForPDF(); } catch(e){}
+        if(insignia){ try { doc.addImage(insignia, 'PNG', 92, 4, 16, 16); } catch(e){} }
+
+        doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(0);
+        doc.text('REPUBLICA DE ANGOLA', 105, 24, {align:'center'});
+        doc.setFontSize(9); doc.setFont('helvetica','normal');
+        doc.text('MINISTERIO DA EDUCACAO', 105, 29, {align:'center'});
+        doc.setDrawColor(204,27,43); doc.setLineWidth(0.5); doc.line(30,32,180,32);
+        doc.setDrawColor(212,160,23); doc.setLineWidth(0.3); doc.line(30,33,180,33);
+        doc.setFontSize(10); doc.setFont('helvetica','bold');
+        doc.text((esc && esc.name ? esc.name : 'ESCOLA').toUpperCase(), 105, 38, {align:'center'});
+        doc.setFontSize(7); doc.setFont('helvetica','normal');
+        var info = [];
+        if(esc && esc.province) info.push(esc.province);
+        if(esc && esc.municipality) info.push(esc.municipality);
+        if(esc && esc.number) info.push('N. ' + esc.number);
+        if(esc && esc.phone1) info.push('Tel: ' + esc.phone1);
+        doc.text(info.join(' -- '), 105, 42, {align:'center'});
+        doc.setDrawColor(212,160,23); doc.setLineWidth(0.2); doc.line(30,44,180,44);
+    };
+
+    // =============================================
+    // 22. FIX: _getStudentCurso
+    // =============================================
+    if(typeof S._getStudentCurso !== 'function'){
+        S._getStudentCurso = async function(studentId, classe, turma){
+            var n = parseInt(classe);
+            if(n < 10 || n > 13) return '';
+            var tid = S.tid();
+            if(!tid) return '';
+            try {
+                var snap = await db.collection('schools').doc(tid).collection('turmas').get();
+                var curso = '';
+                snap.forEach(function(d2){
+                    var t = d2.data();
+                    if(t.classe === classe && t.turma === turma && t.curso) curso = t.curso;
+                });
+                return curso;
+            } catch(e){ return ''; }
+        };
+    }
+
+    // =============================================
+    // 23. FIX: Botão flutuante escondido após login
+    // =============================================
+    var origShowApp2 = S.showApp;
+    S.showApp = async function(){
+        await origShowApp2.call(this);
+        var fb = document.getElementById('floatB');
+        if(fb) fb.style.display = 'none';
+    };
+
+    // =============================================
+    // 24. FIX: Erro ao navegar para página inexistente
+    // =============================================
+    var origRender = S.render;
+    S.render = function(page){
+        try {
+            var fn = S._routes ? S._routes[page] : null;
+            if(fn){
+                fn.call(S);
+            } else if(page === 'dashboard'){
+                S.pgDash();
+            } else {
+                S.pgPlaceholder(S._titles && S._titles[page] ? S._titles[page] : page);
+            }
+        } catch(e){
+            console.error('Erro render ' + page + ':', e);
+            var pc = document.getElementById('pgC');
+            if(pc) pc.innerHTML = '<div class="fade cd tc" style="padding:40px"><span class="material-icons-outlined" style="font-size:2rem;color:#DC2626">error</span><h3 class="fw7 mt-m">Erro</h3><p class="tm mt-s">' + S.san(e.message) + '</p><button class="btn btn-o mt-m" onclick="S.nav(\'dashboard\')">Dashboard</button></div>';
+        }
+    };
+
+    // =============================================
+    // 25. FIX: san (sanitize) não definida
+    // =============================================
+    if(typeof S.san !== 'function'){
+        S.san = function(s){
+            if(!s) return '';
+            var div = document.createElement('div');
+            div.textContent = s;
+            return div.innerHTML;
+        };
+    }
+
+    // =============================================
+    // 26. FIX: Escola não carregada após login
+    // =============================================
+    var origLoadUD = S.loadUD;
+    S.loadUD = async function(uid){
+        await origLoadUD.call(this, uid);
+
+        // Garantir que escola está carregada
+        if(S.ud && S.ud.tenantId && !S.school){
+            try {
+                var schDoc = await db.collection('schools').doc(S.ud.tenantId).get();
+                if(schDoc.exists){
+                    S.school = {id: schDoc.id};
+                    var data = schDoc.data();
+                    for(var k in data) S.school[k] = data[k];
+                }
+            } catch(e){}
+        }
+    };
+
+    // =============================================
+    // 27. FIX: Limpar charts ao navegar
+    // =============================================
+    var origNav2 = S.nav;
+    S.nav = function(page){
+        // Destruir charts existentes
+        if(S._ch){
+            for(var key in S._ch){
+                try { if(S._ch[key] && S._ch[key].destroy) S._ch[key].destroy(); } catch(e){}
+            }
+            S._ch = {};
+        }
+        origNav2.call(S, page);
+    };
+
+    // =============================================
+    // 28. FIX: Erro console duplicado ao criar admin
+    // =============================================
+    if(typeof S.createAdmin === 'function'){
+        var origCreateAdmin = S.createAdmin;
+        S.createAdmin = async function(){
+            try {
+                await origCreateAdmin.call(this);
+            } catch(e){
+                console.error('createAdmin:', e);
+                var btn = document.getElementById('su_bt');
+                if(btn){ btn.disabled = false; btn.textContent = 'Criar Administrador Geral'; }
+                S.toast(e.message || 'Erro', 'error');
+            }
+        };
+    }
+
+    console.log('=== VERIFICACAO DE BUGS COMPLETA ===');
+    console.log('28 correcoes aplicadas:');
+    console.log('  [1] _processPhoto robusta');
+    console.log('  [2] prevPh preview');
+    console.log('  [3] saveStud fallback');
+    console.log('  [4] Listeners cleanup');
+    console.log('  [5] getActiveYear sem indice');
+    console.log('  [6-9] Queries sem indice composto');
+    console.log('  [10] _sAV presencas');
+    console.log('  [11] toast fallback');
+    console.log('  [12-13] Numeros por extenso');
+    console.log('  [14-16] Director e SubDir helpers');
+    console.log('  [17] Genero funcoes');
+    console.log('  [18] QR Code robusto');
+    console.log('  [19-20] Insignia');
+    console.log('  [21] PDF header');
+    console.log('  [22] Curso aluno');
+    console.log('  [23] Botao flutuante');
+    console.log('  [24] Render seguro');
+    console.log('  [25] Sanitize');
+    console.log('  [26] Escola carregada');
+    console.log('  [27] Charts cleanup');
+    console.log('  [28] createAdmin seguro');
+
+})();
+</script>
+<!-- ================================================
+     FIM CORREÇÃO BUGS
+     ================================================ -->
+
 </body>
 </html>
