@@ -24649,5 +24649,487 @@ console.log('  Disponivel para Director, SubDir, Secretaria e Professor');
 <!-- ================================================
      FIM GÉNERO DEFINITIVO
      ================================================ -->
+<!-- ================================================
+     ESTATÍSTICAS CORRIGIDAS
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// ESTATÍSTICAS DA ESCOLA
+// =============================================
+S._routes['school-stats'] = function(){ S._pgSchoolStats(); };
+S._routes['school-reports'] = function(){ S._pgSchoolStats(); };
+
+S._pgSchoolStats = async function(){
+    var pc = document.getElementById('pgC');
+    var tid = S.tid();
+    if(!tid){ pc.innerHTML = '<div class="cd tc" style="padding:40px"><p class="tr">Escola nao definida</p></div>'; return; }
+
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Estatisticas da Escola</h2>'
+        + '<p class="tm fs-s">Dados completos por classe, turma, genero e aproveitamento</p></div>'
+        + '<div style="display:flex;gap:4px;flex-wrap:wrap">'
+        + '<button class="btn btn-g btn-s" onclick="S._expStatPDF()"><span class="material-icons-outlined" style="font-size:.8rem">picture_as_pdf</span>PDF</button>'
+        + '<button class="btn btn-o btn-s" onclick="S._expStatXLSX()"><span class="material-icons-outlined" style="font-size:.8rem">table_chart</span>XLSX</button>'
+        + '</div></div>'
+        + '<div id="statArea"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div></div>';
+
+    try {
+        // Carregar estudantes
+        var studSnap = await db.collection('schools').doc(tid).collection('students').get();
+        var students = [];
+        studSnap.forEach(function(d2){ var s = d2.data(); s._id = d2.id; students.push(s); });
+
+        // Carregar funcionários
+        var staffSnap = await db.collection('schools').doc(tid).collection('staff').get();
+        var staffCount = staffSnap.size;
+
+        // Calcular estatísticas
+        var tot = students.length, masc = 0, fem = 0;
+        var clMap = {}, stMap = {}, tnMap = {}, ctMap = {};
+
+        for(var i = 0; i < students.length; i++){
+            var s = students[i];
+            if(s.sex === 'Masculino') masc++; else fem++;
+
+            var cl = s.classe || 'N/D';
+            var tm = s.turma || '?';
+            var st = s.status || 'Activo';
+            var tn = s.turno || 'N/D';
+            var ctKey = cl + '|' + tm;
+
+            if(!clMap[cl]) clMap[cl] = {total:0,m:0,f:0,activo:0,aprov:0,reprov:0,transf:0,desist:0};
+            clMap[cl].total++; if(s.sex==='Masculino')clMap[cl].m++;else clMap[cl].f++;
+            if(st==='Activo')clMap[cl].activo++;
+            if(st==='Aprovado'||st==='Aprovada')clMap[cl].aprov++;
+            if(st==='Reprovado'||st==='Reprovada')clMap[cl].reprov++;
+            if(st==='Transferido'||st==='Transferida')clMap[cl].transf++;
+            if(st==='Desistente')clMap[cl].desist++;
+
+            stMap[st] = (stMap[st]||0) + 1;
+            tnMap[tn] = (tnMap[tn]||0) + 1;
+
+            if(!ctMap[ctKey]) ctMap[ctKey] = {cl:cl,tm:tm,total:0,m:0,f:0,aprov:0,reprov:0,transf:0,desist:0};
+            ctMap[ctKey].total++; if(s.sex==='Masculino')ctMap[ctKey].m++;else ctMap[ctKey].f++;
+            if(st==='Aprovado'||st==='Aprovada')ctMap[ctKey].aprov++;
+            if(st==='Reprovado'||st==='Reprovada')ctMap[ctKey].reprov++;
+            if(st==='Transferido'||st==='Transferida')ctMap[ctKey].transf++;
+            if(st==='Desistente')ctMap[ctKey].desist++;
+        }
+
+        // Guardar dados
+        S._statData = {students:students,tot:tot,masc:masc,fem:fem,clMap:clMap,stMap:stMap,tnMap:tnMap,ctMap:ctMap,staffCount:staffCount};
+
+        var el = document.getElementById('statArea');
+
+        // Stats gerais
+        var h = '<div class="g4 mb-l">'
+            + '<div class="stc" style="border-left:3px solid #2563EB"><div><div class="st-v" style="color:#2563EB">' + tot + '</div><div class="st-l">Matriculados</div></div></div>'
+            + '<div class="stc" style="border-left:3px solid #3B82F6"><div><div class="st-v" style="color:#3B82F6">' + masc + '</div><div class="st-l">Masculinos</div></div></div>'
+            + '<div class="stc" style="border-left:3px solid #EC4899"><div><div class="st-v" style="color:#EC4899">' + fem + '</div><div class="st-l">Femininos</div></div></div>'
+            + '<div class="stc" style="border-left:3px solid #059669"><div><div class="st-v" style="color:#059669">' + staffCount + '</div><div class="st-l">Funcionarios</div></div></div>'
+            + '</div>';
+
+        // Por estado
+        var estados = ['Activo','Aprovado','Reprovado','Transferido','Desistente','Suspenso','Finalista'];
+        var estCores = {'Activo':'#059669','Aprovado':'#059669','Reprovado':'#DC2626','Transferido':'#F59E0B','Desistente':'#6B7280','Suspenso':'#6B7280','Finalista':'#2563EB'};
+
+        h += '<div class="g4 mb-l">';
+        for(var ei = 0; ei < estados.length; ei++){
+            var est = estados[ei];
+            var estCount = stMap[est] || 0;
+            // Contar femininos também
+            if(est === 'Aprovado') estCount += (stMap['Aprovada']||0);
+            if(est === 'Reprovado') estCount += (stMap['Reprovada']||0);
+            if(est === 'Transferido') estCount += (stMap['Transferida']||0);
+
+            if(estCount > 0){
+                h += '<div class="stc" style="border-left:3px solid ' + (estCores[est]||'#6B7280') + '"><div>'
+                    + '<div class="st-v" style="color:' + (estCores[est]||'#6B7280') + '">' + estCount + '</div>'
+                    + '<div class="st-l">' + est + (est==='Aprovado'?'s':est==='Reprovado'?'s':est==='Transferido'?'s':'s') + '</div></div></div>';
+            }
+        }
+        h += '</div>';
+
+        // Gráficos
+        h += '<div class="g2 mb-l">'
+            + '<div class="cd"><h3 class="fw7 fs-m mb-m">Por Classe</h3><canvas id="stCh1" height="220"></canvas></div>'
+            + '<div class="cd"><h3 class="fw7 fs-m mb-m">Aproveitamento</h3><canvas id="stCh2" height="220"></canvas></div>'
+            + '</div>';
+
+        // Tabela por classe
+        var clKeys = Object.keys(clMap).sort();
+
+        h += '<div class="cd mb-l"><h3 class="fw7 fs-m mb-m">Estatistica por Classe</h3>'
+            + '<div class="ovx"><table class="tbl"><thead><tr>'
+            + '<th>Classe</th><th class="tc">Matric.</th><th class="tc">M</th><th class="tc">F</th>'
+            + '<th class="tc" style="color:#059669">Aprov.</th>'
+            + '<th class="tc" style="color:#DC2626">Reprov.</th>'
+            + '<th class="tc">Transf.</th><th class="tc">Desist.</th>'
+            + '<th class="tc">% Aprov.</th>'
+            + '</tr></thead><tbody>';
+
+        var totalAprov = 0, totalReprov = 0, totalTransf = 0, totalDesist = 0;
+
+        for(var ci2 = 0; ci2 < clKeys.length; ci2++){
+            var ck = clKeys[ci2];
+            var c = clMap[ck];
+            var avaliados = c.aprov + c.reprov;
+            var pctA = avaliados > 0 ? Math.round(c.aprov / avaliados * 100) : 0;
+
+            totalAprov += c.aprov; totalReprov += c.reprov; totalTransf += c.transf; totalDesist += c.desist;
+
+            h += '<tr><td class="fw7">' + ck + '</td>'
+                + '<td class="tc fw7">' + c.total + '</td>'
+                + '<td class="tc">' + c.m + '</td><td class="tc">' + c.f + '</td>'
+                + '<td class="tc fw7" style="color:#059669">' + c.aprov + '</td>'
+                + '<td class="tc fw7" style="color:#DC2626">' + c.reprov + '</td>'
+                + '<td class="tc">' + c.transf + '</td><td class="tc">' + c.desist + '</td>'
+                + '<td class="tc fw7" style="color:' + (pctA>=60?'#059669':'#DC2626') + '">' + pctA + '%</td>'
+                + '</tr>';
+        }
+
+        // Total
+        var totalAval = totalAprov + totalReprov;
+        var totalPctA = totalAval > 0 ? Math.round(totalAprov / totalAval * 100) : 0;
+
+        h += '<tr style="background:rgba(212,160,23,.08)">'
+            + '<td class="fw8">TOTAL</td>'
+            + '<td class="tc fw8">' + tot + '</td>'
+            + '<td class="tc fw7">' + masc + '</td><td class="tc fw7">' + fem + '</td>'
+            + '<td class="tc fw8" style="color:#059669">' + totalAprov + '</td>'
+            + '<td class="tc fw8" style="color:#DC2626">' + totalReprov + '</td>'
+            + '<td class="tc fw7">' + totalTransf + '</td><td class="tc fw7">' + totalDesist + '</td>'
+            + '<td class="tc fw8" style="color:' + (totalPctA>=60?'#059669':'#DC2626') + '">' + totalPctA + '%</td>'
+            + '</tr>';
+
+        h += '</tbody></table></div></div>';
+
+        // Tabela por classe+turma
+        var ctKeys = Object.keys(ctMap).sort();
+
+        h += '<div class="cd mb-l"><h3 class="fw7 fs-m mb-m">Detalhes por Turma</h3>'
+            + '<div class="ovx"><table class="tbl"><thead><tr>'
+            + '<th>Classe</th><th>Turma</th><th class="tc">Mat.</th><th class="tc">M</th><th class="tc">F</th>'
+            + '<th class="tc">Aprov.</th><th class="tc">Repr.</th><th class="tc">Transf.</th><th class="tc">Des.</th>'
+            + '<th class="tc">%</th></tr></thead><tbody>';
+
+        for(var ti = 0; ti < ctKeys.length; ti++){
+            var ct = ctMap[ctKeys[ti]];
+            var av2 = ct.aprov + ct.reprov;
+            var p2 = av2 > 0 ? Math.round(ct.aprov / av2 * 100) : 0;
+
+            h += '<tr><td class="fw7">' + ct.cl + '</td><td><span class="bg bg-in">' + ct.tm + '</span></td>'
+                + '<td class="tc">' + ct.total + '</td><td class="tc">' + ct.m + '</td><td class="tc">' + ct.f + '</td>'
+                + '<td class="tc" style="color:#059669">' + ct.aprov + '</td>'
+                + '<td class="tc" style="color:#DC2626">' + ct.reprov + '</td>'
+                + '<td class="tc">' + ct.transf + '</td><td class="tc">' + ct.desist + '</td>'
+                + '<td class="tc fw7" style="color:' + (p2>=60?'#059669':'#DC2626') + '">' + p2 + '%</td></tr>';
+        }
+
+        h += '</tbody></table></div></div>';
+
+        el.innerHTML = h;
+
+        // Charts
+        setTimeout(function(){
+            try {
+                var c1 = document.getElementById('stCh1');
+                if(c1){
+                    new Chart(c1, {type:'bar', data:{
+                        labels: clKeys,
+                        datasets:[{label:'Total',data:clKeys.map(function(k){return clMap[k].total}),backgroundColor:'#2563EB'}]
+                    }, options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
+                }
+
+                var c2 = document.getElementById('stCh2');
+                if(c2){
+                    new Chart(c2, {type:'bar', data:{
+                        labels: clKeys,
+                        datasets:[
+                            {label:'Aprovados',data:clKeys.map(function(k){return clMap[k].aprov}),backgroundColor:'#059669'},
+                            {label:'Reprovados',data:clKeys.map(function(k){return clMap[k].reprov}),backgroundColor:'#DC2626'},
+                            {label:'Transferidos',data:clKeys.map(function(k){return clMap[k].transf}),backgroundColor:'#F59E0B'}
+                        ]
+                    }, options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}});
+                }
+            } catch(e){ console.log('Chart erro:', e); }
+        }, 300);
+
+    } catch(e){
+        document.getElementById('statArea').innerHTML = '<p class="tr">' + e.message + '</p>';
+    }
+};
+
+// =============================================
+// EXPORTAR PDF
+// =============================================
+S._expStatPDF = async function(){
+    var d = S._statData;
+    if(!d){ S.toast('Carregue primeiro','warn'); return; }
+
+    var esc = S.school || {};
+    var insignia = null;
+    try { insignia = await S._getInsigniaForPDF(); } catch(e){}
+
+    var jsPDF2 = window.jspdf.jsPDF;
+    var doc = new jsPDF2('l','mm','a4');
+
+    if(insignia){try{doc.addImage(insignia,'PNG',140,3,12,12)}catch(e){}}
+
+    doc.setFontSize(10);doc.setFont('helvetica','bold');doc.setTextColor(0);
+    doc.text('REPUBLICA DE ANGOLA',148,9,{align:'center'});
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text('MINISTERIO DA EDUCACAO',148,13,{align:'center'});
+    doc.setDrawColor(204,27,43);doc.setLineWidth(.3);doc.line(30,15,266,15);
+    doc.setFontSize(9);doc.setFont('helvetica','bold');
+    doc.text((esc.name||'').toUpperCase(),148,20,{align:'center'});
+
+    doc.setFontSize(13);
+    doc.text('MAPA ESTATISTICO',148,28,{align:'center'});
+
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text('Total: '+d.tot+' | Masculinos: '+d.masc+' | Femininos: '+d.fem+' | Funcionarios: '+d.staffCount,148,33,{align:'center'});
+
+    // Tabela por classe
+    var clKeys = Object.keys(d.clMap).sort();
+    var rows = [];
+    var tA=0,tR=0,tT=0,tD=0;
+
+    for(var i=0;i<clKeys.length;i++){
+        var c = d.clMap[clKeys[i]];
+        var av = c.aprov+c.reprov;
+        var p = av>0?Math.round(c.aprov/av*100):0;
+        tA+=c.aprov;tR+=c.reprov;tT+=c.transf;tD+=c.desist;
+        rows.push([clKeys[i],c.total,c.m,c.f,c.aprov,c.reprov,c.transf,c.desist,p+'%']);
+    }
+
+    var avT=tA+tR;
+    rows.push(['TOTAL',d.tot,d.masc,d.fem,tA,tR,tT,tD,(avT>0?Math.round(tA/avT*100):0)+'%']);
+
+    doc.autoTable({
+        startY:37,
+        head:[['Classe','Matric.','Masc.','Fem.','Aprovados','Reprovados','Transf.','Desist.','% Aprov.']],
+        body:rows,
+        styles:{fontSize:8,cellPadding:3,halign:'center'},
+        headStyles:{fillColor:[204,27,43],textColor:255,fontStyle:'bold'},
+        columnStyles:{0:{halign:'left',fontStyle:'bold'}},
+        margin:{left:15,right:15},
+        didParseCell:function(d2){
+            if(d2.section==='body'){
+                if(d2.row.index===rows.length-1){
+                    d2.cell.styles.fillColor=[248,246,242];d2.cell.styles.fontStyle='bold';
+                }
+                if(d2.column.index===4)d2.cell.styles.textColor=[5,130,90];
+                if(d2.column.index===5)d2.cell.styles.textColor=[220,38,38];
+                if(d2.column.index===8){
+                    var pct=parseInt(d2.cell.raw);
+                    d2.cell.styles.fontStyle='bold';
+                    d2.cell.styles.textColor=pct>=60?[5,130,90]:[220,38,38];
+                }
+            }
+        }
+    });
+
+    // Tabela por turma
+    var fy = doc.lastAutoTable.finalY + 8;
+    if(fy > 160){ doc.addPage(); fy = 20; }
+
+    doc.setFontSize(10);doc.setFont('helvetica','bold');
+    doc.text('Detalhes por Turma',148,fy,{align:'center'});
+
+    var ctKeys = Object.keys(d.ctMap).sort();
+    var ctRows = [];
+    for(var j=0;j<ctKeys.length;j++){
+        var ct=d.ctMap[ctKeys[j]];
+        var av3=ct.aprov+ct.reprov;
+        ctRows.push([ct.cl,ct.tm,ct.total,ct.m,ct.f,ct.aprov,ct.reprov,ct.transf,ct.desist,(av3>0?Math.round(ct.aprov/av3*100):0)+'%']);
+    }
+
+    doc.autoTable({
+        startY:fy+4,
+        head:[['Classe','Turma','Mat.','M','F','Aprov.','Repr.','Transf.','Des.','%']],
+        body:ctRows,
+        styles:{fontSize:7,cellPadding:2,halign:'center'},
+        headStyles:{fillColor:[60,60,60],textColor:255,fontStyle:'bold',fontSize:6.5},
+        columnStyles:{0:{halign:'left',fontStyle:'bold'}},
+        margin:{left:15,right:15}
+    });
+
+    // Assinaturas
+    fy = doc.lastAutoTable.finalY + 8;
+    if(fy > 175){ doc.addPage(); fy = 20; }
+
+    doc.setFontSize(7);doc.setFont('helvetica','normal');
+    doc.text((esc.municipality||'Luanda')+', '+new Date().toLocaleDateString('pt-AO'),148,fy,{align:'center'});
+
+    fy += 8;
+    var dirSex = await S._fetchDirSex();
+    var dirName = await S._fetchDirName();
+    var subPedSex = await S._fetchSubPedSex();
+    var subPedName = await S._fetchSubPedName();
+
+    doc.setDrawColor(0);doc.setLineWidth(0.2);
+    doc.line(20,fy,90,fy);
+    doc.setFont('helvetica','bold');doc.text(S._sigSubPed(subPedSex),55,fy+4,{align:'center'});
+    doc.setFont('helvetica','normal');doc.line(20,fy+8,90,fy+8);
+    doc.text(subPedName,55,fy+12,{align:'center'});
+
+    doc.line(206,fy,276,fy);
+    doc.setFont('helvetica','bold');doc.text(S._sigDir(dirSex),241,fy+4,{align:'center'});
+    doc.setFont('helvetica','normal');doc.line(206,fy+8,276,fy+8);
+    doc.text(dirName,241,fy+12,{align:'center'});
+
+    doc.save('Estatistica_'+(esc.name||'Escola').replace(/\s+/g,'_')+'.pdf');
+    S.toast('PDF gerado!','success');
+};
+
+// =============================================
+// EXPORTAR XLSX
+// =============================================
+S._expStatXLSX = function(){
+    var d = S._statData;
+    if(!d){ S.toast('Carregue primeiro','warn'); return; }
+
+    var wb = XLSX.utils.book_new();
+
+    // Resumo
+    var resumo = [{'Indicador':'Total Matriculados','Valor':d.tot},{'Indicador':'Masculinos','Valor':d.masc},{'Indicador':'Femininos','Valor':d.fem},{'Indicador':'Funcionarios','Valor':d.staffCount}];
+    var estados = Object.keys(d.stMap);
+    for(var i=0;i<estados.length;i++) resumo.push({'Indicador':estados[i],'Valor':d.stMap[estados[i]]});
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumo), 'Resumo');
+
+    // Por classe
+    var clKeys = Object.keys(d.clMap).sort();
+    var clData = [];
+    for(var j=0;j<clKeys.length;j++){
+        var c=d.clMap[clKeys[j]];
+        var av=c.aprov+c.reprov;
+        clData.push({Classe:clKeys[j],Matriculados:c.total,Masculinos:c.m,Femininos:c.f,Aprovados:c.aprov,Reprovados:c.reprov,Transferidos:c.transf,Desistentes:c.desist,'% Aprovacao':(av>0?Math.round(c.aprov/av*100):0)+'%'});
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(clData), 'Por Classe');
+
+    // Por turma
+    var ctKeys = Object.keys(d.ctMap).sort();
+    var ctData = [];
+    for(var k=0;k<ctKeys.length;k++){
+        var ct=d.ctMap[ctKeys[k]];
+        var av2=ct.aprov+ct.reprov;
+        ctData.push({Classe:ct.cl,Turma:ct.tm,Matriculados:ct.total,M:ct.m,F:ct.f,Aprovados:ct.aprov,Reprovados:ct.reprov,Transferidos:ct.transf,Desistentes:ct.desist,'%':(av2>0?Math.round(ct.aprov/av2*100):0)+'%'});
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ctData), 'Por Turma');
+
+    // Lista alunos
+    var alunosData = [];
+    for(var l=0;l<d.students.length;l++){
+        var s=d.students[l];
+        alunosData.push({'N.':l+1,Nome:s.name,Sexo:s.sex,Classe:s.classe,Turma:s.turma,Turno:s.turno,Processo:s.process,Estado:s.status,Encarregado:s.guardian,'Tel.Enc':s.guardianPhone});
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(alunosData), 'Alunos');
+
+    XLSX.writeFile(wb, 'Estatistica_'+new Date().toISOString().split('T')[0]+'.xlsx');
+    S.toast('XLSX exportado!','success');
+};
+
+// =============================================
+// ESTATÍSTICAS ADMIN GERAL
+// =============================================
+S._routes['global-stats'] = function(){ S._pgGlobalStats(); };
+
+S._pgGlobalStats = async function(){
+    if(!S.hasRole('super_admin')) return S.pgAccessDenied();
+    var pc = document.getElementById('pgC');
+
+    pc.innerHTML = '<div class="fade"><div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Estatisticas do Sistema</h2></div>'
+        + '<div style="display:flex;gap:4px"><button class="btn btn-g btn-s" onclick="S._expGStatPDF()"><span class="material-icons-outlined" style="font-size:.8rem">picture_as_pdf</span>PDF</button>'
+        + '<button class="btn btn-o btn-s" onclick="S._expGStatXLSX()"><span class="material-icons-outlined" style="font-size:.8rem">table_chart</span>XLSX</button></div>'
+        + '</div><div id="gStatArea"><div class="fc" style="padding:30px"><div class="ld-spin" style="width:28px;height:28px;border-width:3px"></div></div></div></div>';
+
+    try {
+        var schSnap = await db.collection('schools').get();
+        var usSnap = await db.collection('users').get();
+
+        var schools = [], totalStudents = 0, totalStaff = 0;
+        var provMap = {}, typeMap = {};
+
+        for(var i = 0; i < schSnap.docs.length; i++){
+            var sch = schSnap.docs[i];
+            var sd = sch.data();
+            var sc = 0, sf = 0;
+            try { sc = (await db.collection('schools').doc(sch.id).collection('students').get()).size; } catch(e){}
+            try { sf = (await db.collection('schools').doc(sch.id).collection('staff').get()).size; } catch(e){}
+            totalStudents += sc; totalStaff += sf;
+            schools.push({name:sd.name,province:sd.province,type:sd.type,students:sc,staff:sf,active:sd.active});
+            provMap[sd.province||'N/D'] = (provMap[sd.province||'N/D']||0) + 1;
+            typeMap[sd.type||'N/D'] = (typeMap[sd.type||'N/D']||0) + 1;
+        }
+
+        var roleMap = {};
+        usSnap.forEach(function(d2){ var r = d2.data().role||'outro'; roleMap[S.RL[r]||r] = (roleMap[S.RL[r]||r]||0)+1; });
+
+        S._gStatData = {schools:schools,totalStudents:totalStudents,totalStaff:totalStaff,provMap:provMap,typeMap:typeMap,roleMap:roleMap,totalSchools:schSnap.size,totalUsers:usSnap.size};
+
+        var el = document.getElementById('gStatArea');
+
+        var h = '<div class="g4 mb-l">'
+            + '<div class="stc"><div class="st-ic" style="background:rgba(204,27,43,.08);color:#CC1B2B"><span class="material-icons-outlined">account_balance</span></div><div><div class="st-v">' + schSnap.size + '</div><div class="st-l">Escolas</div></div></div>'
+            + '<div class="stc"><div class="st-ic" style="background:rgba(212,160,23,.08);color:#D4A017"><span class="material-icons-outlined">people</span></div><div><div class="st-v">' + totalStudents + '</div><div class="st-l">Estudantes</div></div></div>'
+            + '<div class="stc"><div class="st-ic" style="background:rgba(5,150,105,.08);color:#059669"><span class="material-icons-outlined">badge</span></div><div><div class="st-v">' + totalStaff + '</div><div class="st-l">Funcionarios</div></div></div>'
+            + '<div class="stc"><div class="st-ic" style="background:rgba(37,99,235,.08);color:#2563EB"><span class="material-icons-outlined">group</span></div><div><div class="st-v">' + usSnap.size + '</div><div class="st-l">Utilizadores</div></div></div>'
+            + '</div>';
+
+        // Ranking
+        schools.sort(function(a,b){return b.students-a.students});
+        h += '<div class="cd mb-l"><h3 class="fw7 fs-m mb-m">Ranking de Escolas</h3><div class="ovx"><table class="tbl"><thead><tr><th>Pos.</th><th>Escola</th><th>Provincia</th><th>Tipo</th><th class="tc">Estudantes</th><th class="tc">Staff</th><th>Estado</th></tr></thead><tbody>';
+        for(var j=0;j<schools.length;j++){
+            var sc2=schools[j];
+            h+='<tr><td class="fw8" style="color:'+(j<3?'#D4A017':'#6B7280')+'">'+(j+1)+'.</td><td class="fw7 fs-s">'+sc2.name+'</td><td>'+sc2.province+'</td><td class="fs-s">'+sc2.type+'</td><td class="tc fw8">'+sc2.students+'</td><td class="tc">'+sc2.staff+'</td><td><span class="bg '+(sc2.active!==false?'bg-ok':'bg-er')+'">'+(sc2.active!==false?'Activa':'Inactiva')+'</span></td></tr>';
+        }
+        h += '</tbody></table></div></div>';
+
+        // Gráficos
+        h += '<div class="g2"><div class="cd"><h3 class="fw7 fs-m mb-m">Por Provincia</h3><canvas id="gs1" height="200"></canvas></div>'
+            + '<div class="cd"><h3 class="fw7 fs-m mb-m">Por Tipo</h3><canvas id="gs2" height="200"></canvas></div></div>';
+
+        el.innerHTML = h;
+
+        var cores = ['#CC1B2B','#D4A017','#059669','#2563EB','#7C3AED','#EC4899','#F59E0B','#10B981','#6366F1','#EF4444'];
+        setTimeout(function(){
+            try{new Chart(document.getElementById('gs1'),{type:'bar',data:{labels:Object.keys(provMap),datasets:[{data:Object.values(provMap),backgroundColor:cores}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}})}catch(e){}
+            try{new Chart(document.getElementById('gs2'),{type:'doughnut',data:{labels:Object.keys(typeMap),datasets:[{data:Object.values(typeMap),backgroundColor:cores,borderWidth:0}]},options:{responsive:true,plugins:{legend:{position:'bottom'}}}})}catch(e){}
+        },300);
+
+    } catch(e){ document.getElementById('gStatArea').innerHTML = '<p class="tr">'+e.message+'</p>'; }
+};
+
+S._expGStatPDF = async function(){
+    var d=S._gStatData;if(!d){S.toast('Carregue primeiro','warn');return}
+    var jsPDF2=window.jspdf.jsPDF;var doc=new jsPDF2('l','mm','a4');
+    doc.setFontSize(12);doc.setFont('helvetica','bold');doc.text('SGE-NG -- ESTATISTICAS DO SISTEMA',148,14,{align:'center'});
+    doc.setFontSize(8);doc.setFont('helvetica','normal');doc.text(d.totalSchools+' Escolas | '+d.totalStudents+' Estudantes | '+d.totalStaff+' Funcionarios | '+d.totalUsers+' Utilizadores',148,20,{align:'center'});
+
+    var rows=d.schools.map(function(s,i){return[i+1,s.name,s.province,s.type,s.students,s.staff,s.active!==false?'Activa':'Inactiva']});
+    doc.autoTable({startY:25,head:[['Pos.','Escola','Provincia','Tipo','Estudantes','Staff','Estado']],body:rows,styles:{fontSize:7,cellPadding:2},headStyles:{fillColor:[204,27,43]},margin:{left:10,right:10}});
+    doc.save('Estatisticas_Sistema.pdf');S.toast('PDF!','success');
+};
+
+S._expGStatXLSX = function(){
+    var d=S._gStatData;if(!d){S.toast('Sem dados','warn');return}
+    var wb=XLSX.utils.book_new();
+    var schData=d.schools.map(function(s,i){return{'Pos.':i+1,Escola:s.name,Provincia:s.province,Tipo:s.type,Estudantes:s.students,Funcionarios:s.staff,Estado:s.active!==false?'Activa':'Inactiva'}});
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(schData),'Escolas');
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.entries(d.provMap).map(function(e){return{Provincia:e[0],Escolas:e[1]}})),'Provincias');
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(Object.entries(d.roleMap).map(function(e){return{Cargo:e[0],Total:e[1]}})),'Utilizadores');
+    XLSX.writeFile(wb,'Estatisticas_Sistema.xlsx');S.toast('XLSX!','success');
+};
+
+console.log('Estatisticas corrigidas: escola + admin geral');
+
+})();
+</script>
+<!-- ================================================
+     FIM ESTATÍSTICAS
+     ================================================ -->
 </body>
 </html>
