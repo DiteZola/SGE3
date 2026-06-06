@@ -25536,56 +25536,64 @@ console.log('  Passes: insignia, Republica, Ministerio, escola, cor unica, assin
      FIM
      ================================================ -->
 <!-- ================================================
-     CORREÇÃO DOCUMENTOS FINAL
+     DOCUMENTOS OFICIAIS — VERSÃO DEFINITIVA
      ================================================ -->
 <script>
 (function(){
 
+// =============================================
+// CERTIFICADO
+// =============================================
 S._genCertificadosLote = async function(students, esc){
     var jsPDF2 = window.jspdf.jsPDF;
     var doc = new jsPDF2('p','mm','a4');
     var tid = S.tid();
     var yr = '';
     try{var ay=await S.getActiveYear();yr=ay?ay.year:String(new Date().getFullYear())}catch(e){yr=String(new Date().getFullYear())}
-    var insignia = null;
-    try{insignia=await S._getInsigniaForPDF()}catch(e){}
-    var dirSex = await S._fetchDirSex();
-    var dirName = await S._fetchDirName();
+    var insignia=null;try{insignia=await S._getInsigniaForPDF()}catch(e){}
+    var dirSex=await S._fetchDirSex();
+    var dirName=await S._fetchDirName();
 
-    for(var si=0; si<students.length; si++){
-        if(si>0) doc.addPage();
-        var s = students[si];
-        var isFem = s.sex === 'Feminino';
-        var cn = parseInt(s.classe) || 6;
+    for(var si=0;si<students.length;si++){
+        if(si>0)doc.addPage();
+        var s=students[si];
+        var isFem=s.sex==='Feminino';
+        var cn=parseInt(s.classe)||6;
 
-        var alinea='b)', nivel='o Ensino Primario';
+        var alinea='b)',nivel='o Ensino Primario';
         var certClasses=['1. Classe','2. Classe','3. Classe','4. Classe','5. Classe','6. Classe'];
         if(cn>=7&&cn<=9){alinea='c)';nivel='o I Ciclo do Ensino Secundario Geral';certClasses=['7. Classe','8. Classe','9. Classe']}
         else if(cn>=10){alinea='e)';nivel='o II Ciclo do Ensino Secundario Geral';certClasses=cn>=13?['10. Classe','11. Classe','12. Classe','13. Classe']:['10. Classe','11. Classe','12. Classe']}
 
-        // Curso e denominação SÓ para II Ciclo
-        var denomTexto = '';
-        if(cn >= 10){
-            var curso = '';
-            try{curso=await S._getStudentCurso(s.id,s.classe,s.turma)}catch(e){}
-            if(curso) denomTexto = ', na area de ' + curso;
+        // Curso e denominação APENAS para II Ciclo
+        var curso='';
+        if(cn>=10){try{curso=await S._getStudentCurso(s.id,s.classe,s.turma)}catch(e){}}
+
+        // Referência da escola
+        var escolaRef = '';
+        if(esc.number){
+            escolaRef = 'Complexo Escolar N. ' + esc.number;
+            // denominado + curso SÓ no II Ciclo
+            if(cn >= 10 && curso){
+                escolaRef += ', denominado ' + curso;
+            }
+            // NO Primário e I Ciclo: SEM denominado
+        } else {
+            escolaRef = esc.name || '________________________';
         }
 
-        var dobTxt='___/___/______';
-        try{if(s.dob)dobTxt=new Date(s.dob+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){if(s.dob)dobTxt=s.dob}
-        var biDtTxt='___/___/______';
-        try{if(s.biDate)biDtTxt=new Date(s.biDate+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){if(s.biDate)biDtTxt=s.biDate}
+        var dobT='___/___/______';try{if(s.dob)dobT=new Date(s.dob+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){if(s.dob)dobT=s.dob}
+        var biDT='___/___/______';try{if(s.biDate)biDT=new Date(s.biDate+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){if(s.biDate)biDT=s.biDate}
 
         // Notas
-        var allGrades={},gTotal=0,gCount=0,allDiscs=[],discsMap={};
+        var allG={},gT=0,gC=0,allD=[],dMap={};
         for(var ci=0;ci<certClasses.length;ci++){
-            var cl=certClasses[ci];allGrades[cl]={};
-            var dList=S.DISC[cl]||[];
-            for(var dd=0;dd<dList.length;dd++){if(!discsMap[dList[dd]]){discsMap[dList[dd]]=true;allDiscs.push(dList[dd])}}
-            var hist={};try{var hDoc=await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(cl).get();if(hDoc.exists&&hDoc.data().grades)hist=hDoc.data().grades}catch(e){}
-            for(var dj=0;dj<dList.length;dj++){var disc=dList[dj],nota=null;if(hist[disc]!==undefined)nota=Number(hist[disc]);else{var dk=disc.replace(/[^a-zA-Z0-9]/g,''),mts=[];for(var t=1;t<=3;t++){try{var gDoc=await db.collection('schools').doc(tid).collection('grades').doc(s.id+'_'+t+'_'+dk).get();if(gDoc.exists&&gDoc.data().mt!=null)mts.push(gDoc.data().mt)}catch(e){}}if(mts.length>0)nota=mts.reduce(function(a,b){return a+b},0)/mts.length}if(nota!==null){var rv=Math.round(nota);allGrades[cl][disc]=rv;gTotal+=rv;gCount++}}
+            var cl=certClasses[ci];allG[cl]={};var dL=S.DISC[cl]||[];
+            for(var dd=0;dd<dL.length;dd++){if(!dMap[dL[dd]]){dMap[dL[dd]]=true;allD.push(dL[dd])}}
+            var hi2={};try{var hD=await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(cl).get();if(hD.exists&&hD.data().grades)hi2=hD.data().grades}catch(e){}
+            for(var dj=0;dj<dL.length;dj++){var dc=dL[dj],nt=null;if(hi2[dc]!==undefined)nt=Number(hi2[dc]);else{var dk=dc.replace(/[^a-zA-Z0-9]/g,''),mt2=[];for(var t=1;t<=3;t++){try{var gD=await db.collection('schools').doc(tid).collection('grades').doc(s.id+'_'+t+'_'+dk).get();if(gD.exists&&gD.data().mt!=null)mt2.push(gD.data().mt)}catch(e){}}if(mt2.length>0)nt=mt2.reduce(function(a,b){return a+b},0)/mt2.length}if(nt!==null){var rv=Math.round(nt);allG[cl][dc]=rv;gT+=rv;gC++}}
         }
-        var mFinal = gCount > 0 ? Math.round(gTotal / gCount) : 0;
+        var mF=gC>0?Math.round(gT/gC):0;
 
         // Cabeçalho
         if(insignia){try{doc.addImage(insignia,'PNG',92,6,16,16)}catch(e){}}
@@ -25596,155 +25604,56 @@ S._genCertificadosLote = async function(students, esc){
         doc.setFontSize(18);doc.setFont('helvetica','bold');
         doc.text('CERTIFICADO',105,44,{align:'center'});
 
-        // Referência escola (denominação = curso no II Ciclo)
-        var schoolRef = '';
-        if(esc.number){
-            schoolRef = 'Complexo Escolar N. ' + esc.number;
-            // Denominação = nome do curso (SÓ II Ciclo)
-            if(cn >= 10 && curso){
-                schoolRef += ', denominado ' + curso;
-            } else {
-                schoolRef += ', denominado ' + (esc.name || '');
-            }
-        } else {
-            schoolRef = esc.name || '________________________';
-        }
-
-        // CORPO CONTÍNUO (sem quebrar antes/depois do nome)
-        var corpoCompleto = dirName + ', ' + S._txtDir(dirSex) + ' do ' + schoolRef
-            + (esc.decree ? ', criado sob o ' + esc.decree : '')
-            + ', ao abrigo do disposto na alinea ' + alinea + ' do artigo 109. da Lei n. 32/20 de 12 de Agosto'
-            + ', certifica que ' + (s.name || '________________________')
-            + ', filh' + (isFem?'a':'o') + ' de ' + (s.fatherName || '________________________')
-            + ' e de ' + (s.motherName || '________________________')
-            + ', nascid' + (isFem?'a':'o') + ' aos ' + dobTxt
-            + ', natural de ' + (s.naturalidade || '________________')
-            + ', provincia ' + (s.provOrigem || '________________')
-            + ', portador' + (isFem?'a':'') + ' do B.I. n. ' + (s.bi || '________________')
-            + ', passado pelo Arquivo de Identificacao ' + (s.biLocal ? 'de ' + s.biLocal : 'de ________________')
-            + ' aos ' + biDtTxt
-            + ', concluiu no ano lectivo ' + yr + ' ' + nivel + denomTexto
-            + ', conforme consta do processo individual n. ' + (s.process || '________________')
-            + ', com a media final de ';
-
-        // Renderizar texto com nome em vermelho e média em negrito
-        doc.setFontSize(10);doc.setFont('helvetica','normal');doc.setTextColor(0);
-
-        // Dividir o texto no nome do aluno para colorir
-        var parteAntesNome = corpoCompleto.split(s.name || '________________________')[0];
-        var parteDepoisNome = corpoCompleto.split(s.name || '________________________')[1] || '';
-
-        // Texto completo para calcular tamanho
-        var textoFinal = parteAntesNome + (s.name || '________________________') + parteDepoisNome;
-
-        // Renderizar tudo como texto corrido
-        // Usar splitTextToSize para manter fluido
-        var linhasCorpo = doc.splitTextToSize(textoFinal, 170);
-        var tyStart = 52;
-
-        // Encontrar onde está o nome no texto renderizado
+        // ===== CORPO CONTÍNUO JUSTIFICADO =====
         var nomeAluno = s.name || '________________________';
-        var textoAntes = parteAntesNome;
 
-        // Renderizar linha por linha procurando o nome
-        var currentY = tyStart;
-        for(var li = 0; li < linhasCorpo.length; li++){
-            var linha = linhasCorpo[li];
-            var idxNome = linha.indexOf(nomeAluno);
+        var textoCompleto = dirName + ', ' + S._txtDir(dirSex) + ' do ' + escolaRef
+            + (esc.decree ? ', criado sob o ' + esc.decree : '')
+            + ', ao abrigo do disposto na alinea ' + alinea
+            + ' do artigo 109. da Lei n. 32/20 de 12 de Agosto, certifica que '
+            + nomeAluno
+            + ', filh' + (isFem?'a':'o') + ' de ' + (s.fatherName||'________________________')
+            + ' e de ' + (s.motherName||'________________________')
+            + ', nascid' + (isFem?'a':'o') + ' aos ' + dobT
+            + ', natural de ' + (s.naturalidade||'________________')
+            + ', provincia ' + (s.provOrigem||'________________')
+            + ', portador' + (isFem?'a':'') + ' do B.I. n. ' + (s.bi||'________________')
+            + ', passado pelo Arquivo de Identificacao ' + (s.biLocal?'de '+s.biLocal:'de ________________')
+            + ' aos ' + biDT
+            + ', concluiu no ano lectivo ' + yr + ' ' + nivel
+            + (cn>=10&&curso ? ', na area de ' + curso : '')
+            + ', conforme consta do processo individual n. ' + (s.process||'________________')
+            + ', com a media final de ' + mF + ' valores'
+            + ', obtida pelas seguintes classificacoes por disciplina:';
 
-            if(idxNome >= 0){
-                // Esta linha contém o nome
-                var antesDoNome = linha.substring(0, idxNome);
-                var depoisDoNome = linha.substring(idxNome + nomeAluno.length);
+        // Renderizar texto justificado com nome vermelho e média negrito
+        S._renderJustifiedText(doc, textoCompleto, 20, 52, 170, 10, 4.5, nomeAluno, mF);
 
-                // Texto antes do nome (preto normal)
-                doc.setTextColor(0);doc.setFont('helvetica','normal');
-                if(antesDoNome) doc.text(antesDoNome, 20, currentY);
+        var ty = 52 + Math.ceil(doc.splitTextToSize(textoCompleto, 170).length) * 4.5 + 4;
 
-                // Nome em VERMELHO NEGRITO
-                var xNome = 20 + doc.getTextWidth(antesDoNome);
-                doc.setTextColor(204,27,43);doc.setFont('helvetica','bold');
-                doc.text(nomeAluno, xNome, currentY);
+        // Tabela
+        var hR=['Disciplinas'];
+        for(var h2=0;h2<certClasses.length;h2++)hR.push(certClasses[h2].replace(' Classe','.a'));
+        hR.push('Media Final','Por Extenso');
+        var bR=[];
+        for(var d2=0;d2<allD.length;d2++){var ds=allD[d2],r2=[ds],dT2=0,dC2=0;for(var c2=0;c2<certClasses.length;c2++){var n2=allG[certClasses[c2]][ds];if(n2!==undefined){r2.push(n2);dT2+=n2;dC2++}else r2.push('-')}var dA=dC2>0?Math.round(dT2/dC2):'-';r2.push(dA,dA!=='-'?S._intToWords(dA):'-');bR.push(r2)}
 
-                // Texto depois do nome (preto normal)
-                var xDepois = xNome + doc.getTextWidth(nomeAluno);
-                doc.setTextColor(0);doc.setFont('helvetica','normal');
-                if(depoisDoNome) doc.text(depoisDoNome, xDepois, currentY);
-
-            } else {
-                // Verificar se contém "media final de"
-                var idxMedia = linha.indexOf('media final de ');
-                if(idxMedia >= 0){
-                    var antesMedia = linha.substring(0, idxMedia + 15); // "media final de "
-                    var restoLinha = linha.substring(idxMedia + 15);
-
-                    // Separar número da média do resto
-                    var matchNum = restoLinha.match(/^(\d+)/);
-                    if(matchNum){
-                        var numMedia = matchNum[1];
-                        var depoisMedia = restoLinha.substring(numMedia.length);
-
-                        doc.setTextColor(0);doc.setFont('helvetica','normal');
-                        doc.text(antesMedia, 20, currentY);
-
-                        // Média em NEGRITO
-                        var xMedia = 20 + doc.getTextWidth(antesMedia);
-                        doc.setFont('helvetica','bold');
-                        doc.text(numMedia + ' valores', xMedia, currentY);
-
-                        var xAfterMedia = xMedia + doc.getTextWidth(numMedia + ' valores');
-                        doc.setFont('helvetica','normal');
-
-                        // Remover " valores" do resto se já foi escrito
-                        var restoSemValores = depoisMedia.replace(/^\s*valores/, '');
-                        if(restoSemValores.trim()) doc.text(restoSemValores, xAfterMedia, currentY);
-                    } else {
-                        doc.setTextColor(0);doc.setFont('helvetica','normal');
-                        doc.text(linha, 20, currentY);
-                    }
-                } else {
-                    // Linha normal
-                    doc.setTextColor(0);doc.setFont('helvetica','normal');
-                    doc.text(linha, 20, currentY);
-                }
-            }
-            currentY += 4.5;
-        }
-
-        var ty = currentY + 3;
-
-        // TABELA DE NOTAS
-        var headRow = ['Disciplinas'];
-        for(var hi=0;hi<certClasses.length;hi++) headRow.push(certClasses[hi].replace(' Classe','.a'));
-        headRow.push('Media Final','Por Extenso');
-
-        var bodyRows = [];
-        for(var di2=0;di2<allDiscs.length;di2++){
-            var dsc=allDiscs[di2],row2=[dsc],dT2=0,dC2=0;
-            for(var cj=0;cj<certClasses.length;cj++){var nt=allGrades[certClasses[cj]][dsc];if(nt!==undefined){row2.push(nt);dT2+=nt;dC2++}else row2.push('-')}
-            var dAv=dC2>0?Math.round(dT2/dC2):'-';
-            row2.push(dAv,dAv!=='-'?S._intToWords(dAv):'-');
-            bodyRows.push(row2);
-        }
-
-        doc.autoTable({startY:ty,head:[headRow],body:bodyRows,
-            styles:{fontSize:7.5,cellPadding:2,halign:'center',lineColor:[180,180,180],lineWidth:0.15},
+        doc.autoTable({startY:ty,head:[hR],body:bR,
+            styles:{fontSize:7.5,cellPadding:2,halign:'center',lineColor:[180,180,180],lineWidth:.15},
             headStyles:{fillColor:[245,243,240],textColor:[30,30,30],fontStyle:'bold',fontSize:7},
             columnStyles:{0:{halign:'left',cellWidth:40}},margin:{left:18,right:18},
-            didParseCell:function(d2){if(d2.section==='body'&&d2.cell.raw==='-')d2.cell.styles.textColor=[190,190,190]}
-        });
+            didParseCell:function(x){if(x.section==='body'&&x.cell.raw==='-')x.cell.styles.textColor=[190,190,190]}});
 
         ty=doc.lastAutoTable.finalY+6;if(ty>235){doc.addPage();ty=20}
 
-        // Texto final
-        var endTxt='Para efeitos legais, e passado o presente CERTIFICADO, que consta no livro de registo n. '+(s.process||'____')+', folha '+(cn<=6?'6':cn<=9?'9':cn<=12?'12':'13')+'-'+yr+', assinado por mim e autenticado com carimbo a oleo / selo branco em uso neste estabelecimento de ensino.';
+        var eT='Para efeitos legais, e passado o presente CERTIFICADO, que consta no livro de registo n. '+(s.process||'____')+', folha '+(cn<=6?'6':cn<=9?'9':cn<=12?'12':'13')+'-'+yr+', assinado por mim e autenticado com carimbo a oleo / selo branco em uso neste estabelecimento de ensino.';
         doc.setFontSize(10);doc.setFont('helvetica','normal');doc.setTextColor(0);
-        var eL=doc.splitTextToSize(endTxt,170);doc.text(eL,20,ty);ty+=eL.length*4.5+8;
+        var eL=doc.splitTextToSize(eT,170);doc.text(eL,20,ty);ty+=eL.length*4.5+8;
 
-        var meses=['JANEIRO','FEVEREIRO','MARCO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
-        doc.text((esc.name||esc.municipality||'LUANDA').toUpperCase()+', AOS '+new Date().getDate()+' DE '+meses[new Date().getMonth()]+' DE '+new Date().getFullYear(),105,ty,{align:'center'});
+        var ms=['JANEIRO','FEVEREIRO','MARCO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+        doc.text((esc.name||esc.municipality||'LUANDA').toUpperCase()+', AOS '+new Date().getDate()+' DE '+ms[new Date().getMonth()]+' DE '+new Date().getFullYear(),105,ty,{align:'center'});
         ty+=10;doc.text('Conferido por:',20,ty);ty+=14;
-        doc.setDrawColor(0);doc.setLineWidth(0.3);doc.line(55,ty,155,ty);ty+=8;
+        doc.setDrawColor(0);doc.setLineWidth(.3);doc.line(55,ty,155,ty);ty+=8;
         doc.setFontSize(11);doc.setFont('helvetica','bold');doc.text(S._sigDir(dirSex),105,ty,{align:'center'});
         ty+=6;doc.line(55,ty,155,ty);ty+=5;
         doc.setFontSize(10);doc.setFont('helvetica','normal');doc.text(dirName,105,ty,{align:'center'});
@@ -25756,7 +25665,7 @@ S._genCertificadosLote = async function(students, esc){
 };
 
 // =============================================
-// DECLARAÇÃO — Mesmas correções
+// DECLARAÇÃO
 // =============================================
 S._genDeclaracoesLote = async function(students, esc){
     var jsPDF2=window.jspdf.jsPDF;var doc=new jsPDF2('p','mm','a4');var tid=S.tid();
@@ -25772,16 +25681,22 @@ S._genDeclaracoesLote = async function(students, esc){
         if(cn>=7&&cn<=9){alinea='c)';nivel='o I Ciclo do Ensino Secundario Geral'}
         else if(cn>=10){alinea='e)';nivel='o II Ciclo do Ensino Secundario Geral'}
 
-        var denomTexto2='';
-        if(cn>=10){var curso2='';try{curso2=await S._getStudentCurso(s.id,s.classe,s.turma)}catch(e){}if(curso2)denomTexto2=', na area de '+curso2}
+        var curso='';if(cn>=10){try{curso=await S._getStudentCurso(s.id,s.classe,s.turma)}catch(e){}}
 
-        var dobTxt='___/___/______';try{if(s.dob)dobTxt=new Date(s.dob+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){if(s.dob)dobTxt=s.dob}
-        var biDtTxt='___/___/______';try{if(s.biDate)biDtTxt=new Date(s.biDate+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){if(s.biDate)biDtTxt=s.biDate}
+        // Escola ref — denominado SÓ II Ciclo
+        var escolaRef='';
+        if(esc.number){
+            escolaRef='Complexo Escolar N. '+esc.number;
+            if(cn>=10&&curso) escolaRef+=', denominado '+curso;
+        } else { escolaRef=esc.name||''; }
 
-        var discs=S.DISC[s.classe]||[],gradeRows=[],nTotal=0,nCount=0;
-        var hist={};try{var hDoc=await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(s.classe).get();if(hDoc.exists&&hDoc.data().grades)hist=hDoc.data().grades}catch(e){}
-        for(var di=0;di<discs.length;di++){var disc=discs[di],nota=null;if(hist[disc]!==undefined)nota=Number(hist[disc]);else{var dk=disc.replace(/[^a-zA-Z0-9]/g,''),mts=[];for(var t=1;t<=3;t++){try{var g=await db.collection('schools').doc(tid).collection('grades').doc(s.id+'_'+t+'_'+dk).get();if(g.exists&&g.data().mt!=null)mts.push(g.data().mt)}catch(e){}}if(mts.length>0)nota=mts.reduce(function(a,b){return a+b},0)/mts.length}var rounded=nota!==null?Math.round(nota):null;if(rounded!==null){nTotal+=rounded;nCount++}gradeRows.push([disc,rounded!==null?rounded:'-',rounded!==null?S._intToWords(rounded):'-'])}
-        var avg=nCount>0?Math.round(nTotal/nCount):0;
+        var dobT='___/___/______';try{if(s.dob)dobT=new Date(s.dob+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){if(s.dob)dobT=s.dob}
+        var biDT='___/___/______';try{if(s.biDate)biDT=new Date(s.biDate+'T00:00:00').toLocaleDateString('pt-AO')}catch(e){if(s.biDate)biDT=s.biDate}
+
+        var discs=S.DISC[s.classe]||[],gRows=[],nT=0,nC=0;
+        var hi={};try{var hD=await db.collection('schools').doc(tid).collection('students').doc(s.id).collection('historico').doc(s.classe).get();if(hD.exists&&hD.data().grades)hi=hD.data().grades}catch(e){}
+        for(var di=0;di<discs.length;di++){var dc=discs[di],nt=null;if(hi[dc]!==undefined)nt=Number(hi[dc]);else{var dk=dc.replace(/[^a-zA-Z0-9]/g,''),mt2=[];for(var t=1;t<=3;t++){try{var g=await db.collection('schools').doc(tid).collection('grades').doc(s.id+'_'+t+'_'+dk).get();if(g.exists&&g.data().mt!=null)mt2.push(g.data().mt)}catch(e){}}if(mt2.length>0)nt=mt2.reduce(function(a,b){return a+b},0)/mt2.length}var rd=nt!==null?Math.round(nt):null;if(rd!==null){nT+=rd;nC++}gRows.push([dc,rd!==null?rd:'-',rd!==null?S._intToWords(rd):'-'])}
+        var avg=nC>0?Math.round(nT/nC):0;
 
         if(insignia){try{doc.addImage(insignia,'PNG',92,6,16,16)}catch(e){}}
         doc.setFontSize(13);doc.setFont('helvetica','bold');doc.setTextColor(0);
@@ -25791,118 +25706,223 @@ S._genDeclaracoesLote = async function(students, esc){
         doc.setFontSize(18);doc.setFont('helvetica','bold');
         doc.text('DECLARACAO',105,44,{align:'center'});
 
-        // Escola ref com denominação SÓ II Ciclo
-        var schoolRef2='';
-        if(esc.number){
-            schoolRef2='Complexo Escolar N. '+esc.number;
-            if(cn>=10&&curso2) schoolRef2+=', denominado '+curso2;
-            else schoolRef2+=', denominado '+(esc.name||'');
-        } else {
-            schoolRef2=esc.name||'________________________';
-        }
+        var nomeAluno=s.name||'________________________';
 
-        // Corpo contínuo
-        var corpoDecl = dirName+', '+S._txtDir(dirSex)+' do '+schoolRef2
+        var textoDecl=dirName+', '+S._txtDir(dirSex)+' do '+escolaRef
             +(esc.decree?', criado sob o '+esc.decree:'')
-            +', ao abrigo do disposto na alinea '+alinea+' do artigo 109. da Lei n. 32/20 de 12 de Agosto'
-            +', declara que '+(s.name||'________________________')
+            +', ao abrigo do disposto na alinea '+alinea+' do artigo 109. da Lei n. 32/20 de 12 de Agosto, declara que '
+            +nomeAluno
             +', filh'+(isFem?'a':'o')+' de '+(s.fatherName||'________________________')
             +' e de '+(s.motherName||'________________________')
-            +', nascid'+(isFem?'a':'o')+' aos '+dobTxt
+            +', nascid'+(isFem?'a':'o')+' aos '+dobT
             +', natural de '+(s.naturalidade||'________________')
             +', provincia '+(s.provOrigem||'________________')
             +', portador'+(isFem?'a':'')+' do B.I. n. '+(s.bi||'________________')
             +', passado pelo Arquivo de Identificacao '+(s.biLocal?'de '+s.biLocal:'de ________________')
-            +' aos '+biDtTxt
-            +', frequentou no ano lectivo '+yr+' '+nivel+denomTexto2
+            +' aos '+biDT
+            +', frequentou no ano lectivo '+yr+' '+nivel
+            +(cn>=10&&curso?', na area de '+curso:'')
             +', na '+(s.classe||'____')+', turma "'+(s.turma||'__')+'", turno da '+(s.turno||'______')
             +', neste estabelecimento de ensino, com a media final de '+avg+' ('+S._intToWords(avg)+')'
             +', tendo obtido as seguintes classificacoes:';
 
-        // Renderizar com nome vermelho e média negrito
-        var nomeAluno2 = s.name || '________________________';
-        var linhasDecl = doc.splitTextToSize(corpoDecl, 170);
-        var cy2 = 52;
+        S._renderJustifiedText(doc, textoDecl, 20, 52, 170, 10, 4.5, nomeAluno, avg);
 
-        doc.setFontSize(10);
-        for(var li2=0;li2<linhasDecl.length;li2++){
-            var linha2=linhasDecl[li2];
-            var idxN=linha2.indexOf(nomeAluno2);
-            var idxM=linha2.indexOf('media final de ');
+        var ty=52+Math.ceil(doc.splitTextToSize(textoDecl,170).length)*4.5+4;
 
-            if(idxN>=0){
-                var antes2=linha2.substring(0,idxN);
-                var depois2=linha2.substring(idxN+nomeAluno2.length);
-                doc.setTextColor(0);doc.setFont('helvetica','normal');
-                if(antes2)doc.text(antes2,20,cy2);
-                var xN2=20+doc.getTextWidth(antes2);
-                doc.setTextColor(204,27,43);doc.setFont('helvetica','bold');
-                doc.text(nomeAluno2,xN2,cy2);
-                var xD2=xN2+doc.getTextWidth(nomeAluno2);
-                doc.setTextColor(0);doc.setFont('helvetica','normal');
-                if(depois2)doc.text(depois2,xD2,cy2);
-            } else if(idxM>=0){
-                var antM=linha2.substring(0,idxM+15);
-                var resM=linha2.substring(idxM+15);
-                var numM=resM.match(/^(\d+)/);
-                doc.setTextColor(0);doc.setFont('helvetica','normal');
-                doc.text(antM,20,cy2);
-                if(numM){
-                    var xM2=20+doc.getTextWidth(antM);
-                    doc.setFont('helvetica','bold');
-                    doc.text(numM[1],xM2,cy2);
-                    var xAM=xM2+doc.getTextWidth(numM[1]);
-                    doc.setFont('helvetica','normal');
-                    doc.text(resM.substring(numM[1].length),xAM,cy2);
-                }
-            } else {
-                doc.setTextColor(0);doc.setFont('helvetica','normal');
-                doc.text(linha2,20,cy2);
-            }
-            cy2+=4.5;
-        }
-
-        var ty2=cy2+3;
-
-        doc.autoTable({startY:ty2,head:[['Disciplina','Nota','Por Extenso']],body:gradeRows,
-            styles:{fontSize:8,cellPadding:2.5,halign:'center',lineColor:[180,180,180],lineWidth:0.15},
+        doc.autoTable({startY:ty,head:[['Disciplina','Nota','Por Extenso']],body:gRows,
+            styles:{fontSize:8,cellPadding:2.5,halign:'center',lineColor:[180,180,180],lineWidth:.15},
             headStyles:{fillColor:[245,243,240],textColor:[30,30,30],fontStyle:'bold'},
             columnStyles:{0:{halign:'left',cellWidth:65},2:{halign:'left',cellWidth:45}},margin:{left:25,right:25},
-            didParseCell:function(d2){if(d2.section==='body'&&d2.column.index===1){if(d2.cell.raw==='-')d2.cell.styles.textColor=[190,190,190];else{d2.cell.styles.fontStyle='bold';var v=Number(d2.cell.raw);if(!isNaN(v))d2.cell.styles.textColor=v>=pg?[0,100,0]:[200,0,0]}}}
-        });
+            didParseCell:function(x){if(x.section==='body'&&x.column.index===1){if(x.cell.raw==='-')x.cell.styles.textColor=[190,190,190];else{x.cell.styles.fontStyle='bold';var v=Number(x.cell.raw);if(!isNaN(v))x.cell.styles.textColor=v>=pg?[0,100,0]:[200,0,0]}}}});
 
-        ty2=doc.lastAutoTable.finalY+5;
+        ty=doc.lastAutoTable.finalY+5;
         doc.setFontSize(10);doc.setFont('helvetica','normal');doc.setTextColor(0);
-        var endTxt2='Para efeitos legais, e passada a presente DECLARACAO, assinada e autenticada com carimbo em uso neste estabelecimento de ensino.';
-        var eL2=doc.splitTextToSize(endTxt2,170);doc.text(eL2,20,ty2);ty2+=eL2.length*4.5+8;
+        var eT='Para efeitos legais, e passada a presente DECLARACAO, assinada e autenticada com carimbo em uso neste estabelecimento de ensino.';
+        var eL=doc.splitTextToSize(eT,170);doc.text(eL,20,ty);ty+=eL.length*4.5+8;
 
-        var meses2=['JANEIRO','FEVEREIRO','MARCO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
-        doc.text((esc.name||esc.municipality||'LUANDA').toUpperCase()+', AOS '+new Date().getDate()+' DE '+meses2[new Date().getMonth()]+' DE '+new Date().getFullYear(),105,ty2,{align:'center'});
+        var ms=['JANEIRO','FEVEREIRO','MARCO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+        doc.text((esc.name||esc.municipality||'LUANDA').toUpperCase()+', AOS '+new Date().getDate()+' DE '+ms[new Date().getMonth()]+' DE '+new Date().getFullYear(),105,ty,{align:'center'});
 
-        ty2+=14;doc.setDrawColor(0);doc.setLineWidth(0.3);
-        doc.line(20,ty2,90,ty2);doc.setFontSize(8);doc.setFont('helvetica','bold');
-        doc.text(S._sigSubPed(subPedSex),55,ty2+5,{align:'center'});doc.setFont('helvetica','normal');
-        doc.line(20,ty2+10,90,ty2+10);doc.text(subPedName,55,ty2+14,{align:'center'});
-        doc.line(120,ty2,190,ty2);doc.setFont('helvetica','bold');
-        doc.text(S._sigDir(dirSex),155,ty2+5,{align:'center'});doc.setFont('helvetica','normal');
-        doc.line(120,ty2+10,190,ty2+10);doc.text(dirName,155,ty2+14,{align:'center'});
-        try{await S.addQR(doc,'SGE|DECL|'+(s.name||''),97,ty2-2,14)}catch(e){}
+        ty+=14;doc.setDrawColor(0);doc.setLineWidth(.3);
+        doc.line(20,ty,90,ty);doc.setFontSize(8);doc.setFont('helvetica','bold');
+        doc.text(S._sigSubPed(subPedSex),55,ty+5,{align:'center'});doc.setFont('helvetica','normal');
+        doc.line(20,ty+10,90,ty+10);doc.text(subPedName,55,ty+14,{align:'center'});
+        doc.line(120,ty,190,ty);doc.setFont('helvetica','bold');
+        doc.text(S._sigDir(dirSex),155,ty+5,{align:'center'});doc.setFont('helvetica','normal');
+        doc.line(120,ty+10,190,ty+10);doc.text(dirName,155,ty+14,{align:'center'});
+        try{await S.addQR(doc,'SGE|DECL|'+(s.name||''),97,ty-2,14)}catch(e){}
     }
 
     doc.save(students.length===1?'Declaracao_'+(students[0].name||'').replace(/\s+/g,'_')+'.pdf':'Declaracoes_'+students.length+'.pdf');
     S.toast(students.length+' declaracao(oes)!','success');
 };
 
-console.log('Documentos corrigidos:');
-console.log('  Denominacao = curso (so II Ciclo)');
-console.log('  Corpo continuo sem quebra no nome');
-console.log('  Nome do aluno em VERMELHO NEGRITO');
-console.log('  Media em NEGRITO no corpo do texto');
+// =============================================
+// RENDERIZAR TEXTO JUSTIFICADO COM DESTAQUES
+// =============================================
+S._renderJustifiedText = function(doc, texto, xStart, yStart, maxWidth, fontSize, lineHeight, nomeAluno, mediaVal){
+    doc.setFontSize(fontSize);
+    doc.setFont('helvetica','normal');
+    doc.setTextColor(0);
+
+    var lines = doc.splitTextToSize(texto, maxWidth);
+    var y = yStart;
+
+    for(var i = 0; i < lines.length; i++){
+        var line = lines[i];
+        var isLastLine = (i === lines.length - 1);
+        var words = line.split(' ');
+
+        if(isLastLine || words.length <= 1){
+            // Última linha ou linha com 1 palavra: não justificar
+            S._renderLineWithHighlights(doc, line, xStart, y, nomeAluno, mediaVal);
+        } else {
+            // Justificar: distribuir espaço extra entre palavras
+            doc.setFont('helvetica','normal');
+            var lineWidth = doc.getTextWidth(line);
+            var extraSpace = maxWidth - lineWidth;
+            var spacePerGap = extraSpace / (words.length - 1);
+
+            var xCursor = xStart;
+            for(var w = 0; w < words.length; w++){
+                var word = words[w];
+                var nextWords = w < words.length - 1 ? ' ' : '';
+
+                // Verificar se esta palavra é parte do nome
+                var isNome = false;
+                if(nomeAluno){
+                    var nomeWords = nomeAluno.split(' ');
+                    for(var nw = 0; nw < nomeWords.length; nw++){
+                        if(word === nomeWords[nw]) isNome = true;
+                    }
+                    // Verificar se o nome completo começa aqui
+                    var restLine = words.slice(w).join(' ');
+                    if(restLine.indexOf(nomeAluno) === 0) isNome = true;
+                }
+
+                // Verificar se é a média
+                var isMedia = false;
+                var mediaStr = String(mediaVal);
+                if(word === mediaStr || word === mediaStr + ' valores' || word === mediaStr+','){
+                    isMedia = true;
+                }
+
+                if(isNome){
+                    doc.setTextColor(204,27,43);
+                    doc.setFont('helvetica','bold');
+                } else if(isMedia){
+                    doc.setTextColor(0);
+                    doc.setFont('helvetica','bold');
+                } else {
+                    doc.setTextColor(0);
+                    doc.setFont('helvetica','normal');
+                }
+
+                doc.text(word, xCursor, y);
+                xCursor += doc.getTextWidth(word) + doc.getTextWidth(' ') + spacePerGap;
+            }
+        }
+
+        y += lineHeight;
+    }
+
+    // Reset
+    doc.setTextColor(0);
+    doc.setFont('helvetica','normal');
+};
+
+// Renderizar linha com destaques (para última linha não justificada)
+S._renderLineWithHighlights = function(doc, line, x, y, nomeAluno, mediaVal){
+    if(!nomeAluno && !mediaVal){
+        doc.setTextColor(0);doc.setFont('helvetica','normal');
+        doc.text(line, x, y);
+        return;
+    }
+
+    var idxNome = nomeAluno ? line.indexOf(nomeAluno) : -1;
+    var mediaStr = String(mediaVal) + ' valores';
+    var idxMedia = line.indexOf('media final de ');
+
+    if(idxNome < 0 && idxMedia < 0){
+        doc.setTextColor(0);doc.setFont('helvetica','normal');
+        doc.text(line, x, y);
+        return;
+    }
+
+    // Dividir a linha em segmentos
+    var segments = [];
+    var remaining = line;
+    var pos = 0;
+
+    while(remaining.length > 0){
+        var nIdx = nomeAluno ? remaining.indexOf(nomeAluno) : -1;
+        var mIdx = remaining.indexOf('media final de ');
+
+        if(nIdx < 0 && mIdx < 0){
+            segments.push({text: remaining, color: [0,0,0], bold: false});
+            break;
+        }
+
+        var firstIdx = -1;
+        var type = '';
+
+        if(nIdx >= 0 && mIdx >= 0){
+            if(nIdx < mIdx){ firstIdx = nIdx; type = 'nome'; }
+            else { firstIdx = mIdx; type = 'media'; }
+        } else if(nIdx >= 0){ firstIdx = nIdx; type = 'nome'; }
+        else { firstIdx = mIdx; type = 'media'; }
+
+        // Texto antes
+        if(firstIdx > 0){
+            segments.push({text: remaining.substring(0, firstIdx), color: [0,0,0], bold: false});
+        }
+
+        if(type === 'nome'){
+            segments.push({text: nomeAluno, color: [204,27,43], bold: true});
+            remaining = remaining.substring(firstIdx + nomeAluno.length);
+        } else {
+            // "media final de XX valores"
+            var afterMF = remaining.substring(mIdx + 15);
+            var numMatch = afterMF.match(/^(\d+)/);
+            segments.push({text: 'media final de ', color: [0,0,0], bold: false});
+            if(numMatch){
+                segments.push({text: numMatch[1] + ' valores', color: [0,0,0], bold: true});
+                remaining = afterMF.substring(numMatch[1].length);
+                // Remover " valores" do remaining se presente
+                if(remaining.indexOf(' valores') === 0) remaining = remaining.substring(8);
+            } else {
+                remaining = afterMF;
+            }
+            continue;
+        }
+    }
+
+    // Renderizar segmentos
+    var xCursor = x;
+    for(var sg = 0; sg < segments.length; sg++){
+        var seg = segments[sg];
+        doc.setTextColor(seg.color[0], seg.color[1], seg.color[2]);
+        doc.setFont('helvetica', seg.bold ? 'bold' : 'normal');
+        doc.text(seg.text, xCursor, y);
+        xCursor += doc.getTextWidth(seg.text);
+    }
+
+    doc.setTextColor(0);doc.setFont('helvetica','normal');
+};
+
+console.log('DOCUMENTOS VERSAO DEFINITIVA:');
+console.log('  Denominacao: SO II Ciclo (nome do curso)');
+console.log('  Primario/I Ciclo: SEM denominado');
+console.log('  Corpo: justificado como documento oficial');
+console.log('  Nome aluno: VERMELHO NEGRITO');
+console.log('  Media: NEGRITO');
+console.log('  Sem quebra do corpo');
 
 })();
 </script>
 <!-- ================================================
-     FIM
+     FIM DOCUMENTOS DEFINITIVOS
      ================================================ -->
 </body>
 </html>
