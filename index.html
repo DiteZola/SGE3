@@ -25924,5 +25924,436 @@ console.log('  Sem quebra do corpo');
 <!-- ================================================
      FIM DOCUMENTOS DEFINITIVOS
      ================================================ -->
+<!-- ================================================
+     FALTAS PDF + ALTERAR CREDENCIAIS
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// 1. BOTÃO RELATÓRIO FALTAS EM TODOS OS PERFIS
+// =============================================
+var origMenu = S.getMenu;
+S.getMenu = function(role){
+    var m = origMenu.call(this, role);
+    
+    // Adicionar "Relatorio Faltas" para todos que têm presenças
+    var hasAtt = ['diretor','subdiretor_pedagogico','subdiretor_administrativo','secretaria','coordenador','professor'].indexOf(role) >= 0;
+    if(hasAtt){
+        var exists = false;
+        for(var i=0;i<m.length;i++){ if(m[i].p === 'absence-report') exists = true; }
+        if(!exists){
+            m.push({s:'RELATORIOS',p:'absence-report',i:'assignment_late',l:'Relatorio de Faltas'});
+        }
+    }
+    return m;
+};
+
+S._routes['absence-report'] = function(){ S._pgAbsenceReport(); };
+S._titles['absence-report'] = 'Relatorio de Faltas';
+
+// =============================================
+// PÁGINA RELATÓRIO DE FALTAS
+// =============================================
+S._pgAbsenceReport = async function(){
+    var pc = document.getElementById('pgC');
+    var tid = S.tid();
+    var isProfessor = S.hasRole('professor');
+
+    // Classes disponíveis
+    var classOptions = '';
+    if(isProfessor){
+        var assigns = await S._loadProfAssignments();
+        var uniqueCT = {};
+        for(var i=0;i<assigns.length;i++){
+            var key = assigns[i].classe;
+            if(!uniqueCT[key]) uniqueCT[key] = true;
+        }
+        for(var k in uniqueCT) classOptions += '<option value="'+k+'">'+k+'</option>';
+    } else {
+        var cls = S.school ? S.clsFor(S.school.type) : S.allCls();
+        for(var j=0;j<cls.length;j++) classOptions += '<option value="'+cls[j]+'">'+cls[j]+'</option>';
+    }
+
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Relatorio de Faltas</h2>'
+        + '<p class="tm fs-s">Por classe, turma, mes, trimestre ou anual</p></div></div>'
+
+        + '<div class="cd mb-l"><div class="g2 mb-m">'
+        + '<div class="fg"><label class="fl">Classe *</label><select id="abr_cl" class="fs" onchange="S._abrLoadTurmas2()"><option value="">--</option>'+classOptions+'</select></div>'
+        + '<div class="fg"><label class="fl">Turma *</label><select id="abr_tm" class="fs"><option value="">--</option></select></div>'
+        + '</div><div class="g3 mb-m">'
+        + '<div class="fg"><label class="fl">Periodo</label><select id="abr_per" class="fs" onchange="S._abrSetDates2()">'
+        + '<option value="">Personalizado</option>'
+        + '<option value="mes">Este Mes</option>'
+        + '<option value="1t">1. Trimestre</option>'
+        + '<option value="2t">2. Trimestre</option>'
+        + '<option value="3t">3. Trimestre</option>'
+        + '<option value="anual">Anual</option></select></div>'
+        + '<div class="fg"><label class="fl">Data Inicio</label><input type="date" id="abr_di" class="fi"></div>'
+        + '<div class="fg"><label class="fl">Data Fim</label><input type="date" id="abr_df" class="fi" value="'+new Date().toISOString().split('T')[0]+'"></div>'
+        + '</div>'
+        + '<div style="display:flex;gap:5px">'
+        + '<button class="btn btn-r" onclick="S._abrGenerate()"><span class="material-icons-outlined">visibility</span>Ver</button>'
+        + '<button class="btn btn-g btn-s" onclick="S._abrPDF()"><span class="material-icons-outlined" style="font-size:.85rem">picture_as_pdf</span>PDF</button>'
+        + '<button class="btn btn-o btn-s" onclick="S._abrXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>'
+        + '</div></div>'
+        + '<div id="abrArea"></div></div>';
+};
+
+S._abrLoadTurmas2 = async function(){
+    var cl = document.getElementById('abr_cl');
+    var tm = document.getElementById('abr_tm');
+    if(!cl||!tm) return;
+    tm.innerHTML = '<option value="">--</option>';
+    if(!cl.value) return;
+    var tid = S.tid();
+    var turmas = await S._getTurmasByClass(tid, cl.value);
+    for(var i=0;i<turmas.length;i++){
+        if(turmas[i].active !== false) tm.innerHTML += '<option value="'+turmas[i].turma+'">'+turmas[i].turma+'</option>';
+    }
+    if(turmas.length === 0){
+        var studs = await S._getStudentsByClass(tid, cl.value);
+        var u = {};
+        for(var j=0;j<studs.length;j++){if(studs[j].turma && !u[studs[j].turma]){u[studs[j].turma]=true;tm.innerHTML+='<option value="'+studs[j].turma+'">'+studs[j].turma+'</option>'}}
+    }
+};
+
+S._abrSetDates2 = function(){
+    var per=document.getElementById('abr_per');
+    var di=document.getElementById('abr_di');
+    var df=document.getElementById('abr_df');
+    if(!per||!di||!df) return;
+    var yr=new Date().getFullYear();
+    var mo=new Date().getMonth();
+    switch(per.value){
+        case 'mes': di.value=yr+'-'+String(mo+1).padStart(2,'0')+'-01';df.value=new Date().toISOString().split('T')[0]; break;
+        case '1t': di.value=yr+'-02-01';df.value=yr+'-05-31'; break;
+        case '2t': di.value=yr+'-06-01';df.value=yr+'-09-30'; break;
+        case '3t': di.value=yr+'-10-01';df.value=yr+'-12-31'; break;
+        case 'anual': di.value=yr+'-01-01';df.value=yr+'-12-31'; break;
+    }
+};
+
+// Construir dados
+S._abrBuildData = async function(){
+    var cl=document.getElementById('abr_cl');
+    var tm=document.getElementById('abr_tm');
+    var di=document.getElementById('abr_di');
+    var df=document.getElementById('abr_df');
+    if(!cl||!cl.value||!tm||!tm.value||!di||!di.value||!df||!df.value) return null;
+
+    var tid=S.tid();
+    var students=await S._getStudentsByClassTurma(tid,cl.value,tm.value);
+    var allAtt={};
+
+    try{
+        var snap=await db.collection('schools').doc(tid).collection('attendance').get();
+        snap.forEach(function(d2){
+            var a=d2.data();
+            if(a.classe===cl.value&&a.turma===tm.value&&a.date>=di.value&&a.date<=df.value){
+                if(!allAtt[a.studentId])allAtt[a.studentId]=[];
+                allAtt[a.studentId].push(a);
+            }
+        });
+    }catch(e){}
+
+    var rows=[];
+    var tP=0,tFNJ=0,tFJ=0,tA=0;
+
+    for(var i=0;i<students.length;i++){
+        var s=students[i];
+        var att=allAtt[s.id]||[];
+        var pres=0,fnj=0,fj=0,atr=0;
+        for(var j=0;j<att.length;j++){
+            if(att[j].status==='P')pres++;
+            else if(att[j].status==='F')fnj++;
+            else if(att[j].status==='J')fj++;
+            else if(att[j].status==='A')atr++;
+        }
+        var totalF=fnj+fj;
+        var totalA=pres+fnj+fj+atr;
+        var pct=totalA>0?Math.round(pres/totalA*100):0;
+        var obs='';
+        if(pct>=90)obs='Excelente';else if(pct>=75)obs='Bom';else if(pct>=50)obs='Regular';
+        else if(pct>=25)obs='Critico';else if(totalA>0)obs='Muito critico';else obs='Sem registos';
+        if(s.status==='Transferido'||s.status==='Transferida')obs='Transferido';
+        if(s.status==='Desistente')obs='Desistente';
+
+        tP+=pres;tFNJ+=fnj;tFJ+=fj;tA+=atr;
+
+        rows.push({name:s.name||'',sex:s.sex==='Feminino'?'F':'M',totalAulas:totalA,presencas:pres,faltasNJ:fnj,faltasJ:fj,atrasos:atr,totalFaltas:totalF,pct:pct,obs:obs});
+    }
+
+    var perEl=document.getElementById('abr_per');
+    var labels={'mes':'Mensal','1t':'1. Trimestre','2t':'2. Trimestre','3t':'3. Trimestre','anual':'Anual'};
+    var perLabel=perEl&&perEl.value?labels[perEl.value]||'':di.value+' a '+df.value;
+
+    return {rows:rows,tP:tP,tFNJ:tFNJ,tFJ:tFJ,tA:tA,classe:cl.value,turma:tm.value,periodo:perLabel,di:di.value,df:df.value};
+};
+
+// Ver no ecrã
+S._abrGenerate = async function(){
+    var data = await S._abrBuildData();
+    if(!data){S.toast('Preencha todos os campos','error');return}
+
+    var area=document.getElementById('abrArea');
+    var h='<div class="cd"><div class="fb fw gm mb-m"><div>'
+        +'<h3 class="fw7 fs-m">'+data.classe+' - Turma '+data.turma+'</h3>'
+        +'<p class="tm fs-s">'+data.periodo+' | '+data.rows.length+' alunos</p></div></div>'
+        +'<div class="ovx"><table class="tbl"><thead><tr>'
+        +'<th>N.</th><th>Nome</th><th>Gen.</th><th class="tc">Aulas</th>'
+        +'<th class="tc">Pres.</th><th class="tc">Faltas</th><th class="tc">Just.</th>'
+        +'<th class="tc">Atrasos</th><th class="tc">Tot.Falt.</th><th class="tc">% Assid.</th><th>Obs.</th>'
+        +'</tr></thead><tbody>';
+
+    for(var i=0;i<data.rows.length;i++){
+        var r=data.rows[i];
+        var cor=r.pct>=75?'#059669':r.pct>=50?'#F59E0B':'#DC2626';
+        h+='<tr><td>'+(i+1)+'</td><td class="fw7 fs-s">'+r.name+'</td><td class="tc">'+r.sex+'</td>'
+            +'<td class="tc">'+r.totalAulas+'</td>'
+            +'<td class="tc" style="color:#059669">'+r.presencas+'</td>'
+            +'<td class="tc" style="color:#DC2626">'+r.faltasNJ+'</td>'
+            +'<td class="tc" style="color:#2563EB">'+r.faltasJ+'</td>'
+            +'<td class="tc" style="color:#F59E0B">'+r.atrasos+'</td>'
+            +'<td class="tc fw7" style="color:#DC2626">'+r.totalFaltas+'</td>'
+            +'<td class="tc fw8" style="color:'+cor+'">'+r.pct+'%</td>'
+            +'<td class="fs-s">'+r.obs+'</td></tr>';
+    }
+    h+='</tbody></table></div></div>';
+    area.innerHTML=h;
+};
+
+// PDF
+S._abrPDF = async function(){
+    var data=await S._abrBuildData();
+    if(!data){S.toast('Preencha tudo','error');return}
+    var esc=S.school||{};var insignia=null;
+    try{insignia=await S._getInsigniaForPDF()}catch(e){}
+    var dirSex=await S._fetchDirSex();var dirName=await S._fetchDirName();
+    var subPedSex=await S._fetchSubPedSex();var subPedName=await S._fetchSubPedName();
+
+    var jsPDF2=window.jspdf.jsPDF;
+    var doc=new jsPDF2('l','mm','a4');
+
+    if(insignia){try{doc.addImage(insignia,'PNG',140,3,12,12)}catch(e){}}
+    doc.setFontSize(10);doc.setFont('helvetica','bold');doc.setTextColor(0);
+    doc.text('REPUBLICA DE ANGOLA',148,10,{align:'center'});
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text('MINISTERIO DA EDUCACAO',148,14,{align:'center'});
+    doc.setDrawColor(204,27,43);doc.setLineWidth(.3);doc.line(30,16,266,16);
+    doc.setFontSize(9);doc.setFont('helvetica','bold');
+    doc.text((esc.name||'').toUpperCase(),148,21,{align:'center'});
+
+    doc.setFontSize(12);
+    doc.text('MAPA DE FALTAS - '+data.periodo.toUpperCase(),148,28,{align:'center'});
+    doc.setFontSize(8);doc.setFont('helvetica','normal');
+    doc.text('Classe: '+data.classe+' | Turma: '+data.turma+' | '+data.periodo,148,33,{align:'center'});
+
+    var rows=[];
+    for(var i=0;i<data.rows.length;i++){
+        var r=data.rows[i];
+        rows.push([i+1,r.name,r.sex,r.totalAulas,r.presencas,r.faltasNJ,r.faltasJ,r.atrasos,r.totalFaltas,r.pct+'%',r.obs]);
+    }
+    // Total
+    var avgPct=data.rows.length>0?Math.round(data.rows.reduce(function(a,b){return a+b.pct},0)/data.rows.length):0;
+    rows.push(['','TOTAL','','',(data.tP),(data.tFNJ),(data.tFJ),(data.tA),(data.tFNJ+data.tFJ),avgPct+'%','']);
+
+    doc.autoTable({startY:37,head:[['N.','Nome','Gen.','Aulas','Pres.','Faltas','Just.','Atr.','Tot.F.','% Assid.','Obs.']],body:rows,
+        styles:{fontSize:7,cellPadding:2,halign:'center',lineColor:[200,200,200],lineWidth:.1},
+        headStyles:{fillColor:[245,243,240],textColor:[30,30,30],fontStyle:'bold',fontSize:6.5},
+        columnStyles:{0:{cellWidth:8},1:{halign:'left',cellWidth:45},10:{halign:'left',cellWidth:22}},
+        margin:{left:8,right:8},
+        didParseCell:function(d2){
+            if(d2.section==='body'){
+                if(d2.column.index===4)d2.cell.styles.textColor=[5,130,90];
+                if(d2.column.index===5||d2.column.index===8)d2.cell.styles.textColor=[220,38,38];
+                if(d2.column.index===6)d2.cell.styles.textColor=[37,99,235];
+                if(d2.column.index===9){d2.cell.styles.fontStyle='bold';var p=parseInt(d2.cell.raw);d2.cell.styles.textColor=p>=75?[5,130,90]:p>=50?[200,150,0]:[220,38,38]}
+                if(d2.row.index===rows.length-1){d2.cell.styles.fillColor=[248,246,242];d2.cell.styles.fontStyle='bold'}
+            }
+        }
+    });
+
+    var fy=doc.lastAutoTable.finalY+6;
+    doc.setFontSize(6.5);doc.text('Legenda: P=Presente | F=Falta | J=Justificada | A=Atraso',10,fy);
+
+    fy+=8;doc.setFontSize(7);
+    doc.text((esc.municipality||'Luanda')+', '+new Date().toLocaleDateString('pt-AO'),148,fy,{align:'center'});
+    fy+=8;doc.setDrawColor(0);doc.setLineWidth(.2);
+    doc.line(20,fy,90,fy);doc.setFont('helvetica','bold');
+    doc.text(S._sigSubPed(subPedSex),55,fy+4,{align:'center'});doc.setFont('helvetica','normal');
+    doc.line(20,fy+8,90,fy+8);doc.text(subPedName,55,fy+12,{align:'center'});
+    doc.line(206,fy,276,fy);doc.setFont('helvetica','bold');
+    doc.text(S._sigDir(dirSex),241,fy+4,{align:'center'});doc.setFont('helvetica','normal');
+    doc.line(206,fy+8,276,fy+8);doc.text(dirName,241,fy+12,{align:'center'});
+
+    doc.save('Faltas_'+data.classe+'_'+data.turma+'_'+data.periodo.replace(/\s/g,'_')+'.pdf');
+    S.toast('PDF gerado!','success');
+};
+
+// XLSX
+S._abrXLSX = async function(){
+    var data=await S._abrBuildData();
+    if(!data){S.toast('Preencha tudo','error');return}
+    var xlData=[];
+    for(var i=0;i<data.rows.length;i++){
+        var r=data.rows[i];
+        xlData.push({'N.':i+1,'Nome':r.name,'Genero':r.sex,'Total Aulas':r.totalAulas,'Presencas':r.presencas,'Faltas':r.faltasNJ,'Justificadas':r.faltasJ,'Atrasos':r.atrasos,'Total Faltas':r.totalFaltas,'% Assiduidade':r.pct+'%','Observacao':r.obs});
+    }
+    var ws=XLSX.utils.json_to_sheet(xlData);var wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,'Faltas');
+    XLSX.writeFile(wb,'Faltas_'+data.classe+'_'+data.turma+'.xlsx');
+    S.toast('XLSX exportado!','success');
+};
+
+// =============================================
+// 2. ALTERAR CREDENCIAIS (TODOS OS UTILIZADORES)
+// =============================================
+
+// Adicionar ao menu de configurações
+var origSettings = S._routes['settings'];
+S._routes['settings'] = function(){
+    if(typeof origSettings === 'function') origSettings.call(S);
+    
+    // Adicionar botão de alterar credenciais após renderizar
+    setTimeout(function(){
+        var pc = document.getElementById('pgC');
+        if(!pc) return;
+        
+        // Verificar se já adicionou
+        if(pc.innerHTML.indexOf('changeCredBtn') >= 0) return;
+
+        var existingContent = pc.innerHTML;
+        
+        // Adicionar secção de credenciais no final
+        var credSection = '<div class="cd mt-l">'
+            + '<h3 class="fw7 fs-m mb-m"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#DC2626;font-size:1rem">vpn_key</span>Alterar Credenciais</h3>'
+            + '<p class="tm fs-s mb-m">Altere a sua palavra-passe de acesso ao sistema.</p>'
+            + '<div class="g2">'
+            + '<button class="btn btn-r btn-s" onclick="S._mdChangePassword()" id="changeCredBtn"><span class="material-icons-outlined" style="font-size:.8rem">lock</span>Alterar Palavra-passe</button>'
+            + '<button class="btn btn-o btn-s" onclick="S._mdChangeEmail()"><span class="material-icons-outlined" style="font-size:.8rem">email</span>Alterar Email</button>'
+            + '</div></div>';
+
+        // Encontrar o último </div> e inserir antes
+        pc.innerHTML = existingContent + credSection;
+    }, 500);
+};
+
+// Modal alterar senha
+S._mdChangePassword = function(){
+    S.oModal('Alterar Palavra-passe',
+        '<form onsubmit="return false">'
+        + '<div class="cd mb-m" style="padding:10px;background:rgba(220,38,38,.04);border-color:rgba(220,38,38,.12)">'
+        + '<p class="fs-s"><span class="material-icons-outlined" style="font-size:.85rem;vertical-align:middle;color:#DC2626;margin-right:3px">warning</span>'
+        + 'Apos alterar a palavra-passe, tera de fazer login novamente.</p></div>'
+        + '<div class="fg"><label class="fl">Palavra-passe Actual *</label><input type="password" id="cp_current" class="fi" required></div>'
+        + '<div class="fg"><label class="fl">Nova Palavra-passe * (min. 8 caracteres)</label><input type="password" id="cp_new" class="fi" minlength="8" required></div>'
+        + '<div class="fg"><label class="fl">Confirmar Nova *</label><input type="password" id="cp_confirm" class="fi" required></div>'
+        + '</form>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._saveChangePassword()" id="cpSvBtn"><span class="material-icons-outlined">lock</span>Alterar</button>',
+        '450px');
+};
+
+S._saveChangePassword = async function(){
+    var current = document.getElementById('cp_current');
+    var newPw = document.getElementById('cp_new');
+    var confirm2 = document.getElementById('cp_confirm');
+    
+    if(!current||!current.value){S.toast('Introduza a senha actual','error');return}
+    if(!newPw||!newPw.value||newPw.value.length<8){S.toast('Nova senha deve ter 8+ caracteres','error');return}
+    if(!confirm2||newPw.value!==confirm2.value){S.toast('Senhas nao coincidem','error');return}
+
+    var btn=document.getElementById('cpSvBtn');
+    if(btn){btn.disabled=true;btn.textContent='Alterando...'}
+
+    try {
+        // Reautenticar
+        var user = auth.currentUser;
+        var credential = firebase.auth.EmailAuthProvider.credential(user.email, current.value);
+        await user.reauthenticateWithCredential(credential);
+        
+        // Alterar senha
+        await user.updatePassword(newPw.value);
+        
+        S.log('auth','Palavra-passe alterada');
+        S.toast('Palavra-passe alterada! Faca login novamente.','success');
+        S.cModal();
+        
+        // Logout após 2 segundos
+        setTimeout(function(){ S.logout(); }, 2000);
+        
+    } catch(e){
+        if(btn){btn.disabled=false;btn.innerHTML='<span class="material-icons-outlined">lock</span>Alterar'}
+        if(e.code==='auth/wrong-password') S.toast('Senha actual incorrecta','error');
+        else if(e.code==='auth/weak-password') S.toast('Nova senha muito fraca','error');
+        else S.toast('Erro: '+e.message,'error');
+    }
+};
+
+// Modal alterar email
+S._mdChangeEmail = function(){
+    S.oModal('Alterar Email',
+        '<form onsubmit="return false">'
+        + '<div class="cd mb-m" style="padding:10px;background:rgba(220,38,38,.04);border-color:rgba(220,38,38,.12)">'
+        + '<p class="fs-s"><span class="material-icons-outlined" style="font-size:.85rem;vertical-align:middle;color:#DC2626;margin-right:3px">warning</span>'
+        + 'Apos alterar o email, tera de fazer login com o novo email.</p></div>'
+        + '<p class="fs-s mb-m">Email actual: <strong>' + (S.ud ? S.ud.email : '') + '</strong></p>'
+        + '<div class="fg"><label class="fl">Palavra-passe Actual *</label><input type="password" id="ce_pw" class="fi" required></div>'
+        + '<div class="fg"><label class="fl">Novo Email *</label><input type="email" id="ce_new" class="fi" required></div>'
+        + '</form>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._saveChangeEmail()" id="ceSvBtn"><span class="material-icons-outlined">email</span>Alterar</button>',
+        '450px');
+};
+
+S._saveChangeEmail = async function(){
+    var pw = document.getElementById('ce_pw');
+    var newEmail = document.getElementById('ce_new');
+    
+    if(!pw||!pw.value){S.toast('Introduza a senha','error');return}
+    if(!newEmail||!newEmail.value){S.toast('Introduza o novo email','error');return}
+
+    var btn=document.getElementById('ceSvBtn');
+    if(btn){btn.disabled=true;btn.textContent='Alterando...'}
+
+    try {
+        var user = auth.currentUser;
+        var credential = firebase.auth.EmailAuthProvider.credential(user.email, pw.value);
+        await user.reauthenticateWithCredential(credential);
+        
+        await user.updateEmail(newEmail.value);
+        
+        // Actualizar no Firestore
+        await db.collection('users').doc(user.uid).update({
+            email: newEmail.value,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        if(S.ud) S.ud.email = newEmail.value;
+        
+        S.log('auth','Email alterado para '+newEmail.value);
+        S.toast('Email alterado! Faca login com o novo email.','success');
+        S.cModal();
+        
+        setTimeout(function(){ S.logout(); }, 2000);
+        
+    } catch(e){
+        if(btn){btn.disabled=false;btn.innerHTML='<span class="material-icons-outlined">email</span>Alterar'}
+        if(e.code==='auth/wrong-password') S.toast('Senha incorrecta','error');
+        else if(e.code==='auth/email-already-in-use') S.toast('Email ja em uso','error');
+        else if(e.code==='auth/invalid-email') S.toast('Email invalido','error');
+        else S.toast('Erro: '+e.message,'error');
+    }
+};
+
+console.log('Relatorio faltas + Alterar credenciais carregados');
+
+})();
+</script>
+<!-- ================================================
+     FIM
+     ================================================ -->
 </body>
 </html>
