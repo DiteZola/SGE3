@@ -26780,5 +26780,350 @@ console.log('  Escola completa: tudo num ficheiro (alunos+staff+turmas+financas)
 <!-- ================================================
      FIM RELATÓRIOS COMPLETOS
      ================================================ -->
+<!-- ================================================
+     CERTIFICADO HISTÓRICO + DECLARAÇÃO ANO LECTIVO
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// 1. DOCUMENTOS — Escolher tipo antes de gerar
+// =============================================
+var origEmitDoc = S._emitDoc;
+S._emitDoc = async function(type, studentId){
+    if(type === 'certificado'){
+        S._mdCertOptions(studentId);
+        return;
+    }
+    if(type === 'declaracao'){
+        S._mdDeclOptions(studentId);
+        return;
+    }
+    await origEmitDoc.call(this, type, studentId);
+};
+
+// =============================================
+// 2. CERTIFICADO — Buscar dados do histórico
+// =============================================
+S._mdCertOptions = function(studentId){
+    S.oModal('Gerar Certificado',
+        '<div class="cd mb-m" style="padding:10px;background:rgba(37,99,235,.04);border-color:rgba(37,99,235,.12)">'
+        + '<p class="fs-s"><span class="material-icons-outlined" style="font-size:.85rem;vertical-align:middle;color:#2563EB;margin-right:3px">info</span>'
+        + 'O sistema busca automaticamente as notas do historico escolar e das classes onde o aluno aprovou.</p></div>'
+        + '<div class="fg"><label class="fl">Ano Lectivo do Certificado</label>'
+        + '<input type="text" id="certYr" class="fi" value="' + new Date().getFullYear() + '" placeholder="Ex: 2025"></div>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._genCertFromHist(\'' + studentId + '\')"><span class="material-icons-outlined">workspace_premium</span>Gerar Certificado</button>',
+        '450px');
+};
+
+S._genCertFromHist = async function(studentId){
+    var yr = document.getElementById('certYr');
+    var yrVal = yr ? yr.value.trim() : String(new Date().getFullYear());
+    S.cModal();
+
+    var tid = S.tid();
+    if(!tid){S.toast('Escola nao definida','error');return}
+
+    try {
+        var sDoc = await db.collection('schools').doc(tid).collection('students').doc(studentId).get();
+        if(!sDoc.exists){S.toast('Aluno nao encontrado','error');return}
+        var s = sDoc.data();
+        s.id = studentId;
+
+        var esc = S.school || {};
+        try{var eDoc = await db.collection('schools').doc(tid).get();if(eDoc.exists)esc=eDoc.data();esc.id=tid}catch(e){}
+
+        var cn = parseInt(s.classe) || 6;
+        var certClasses = [];
+        if(cn<=6) certClasses=['1. Classe','2. Classe','3. Classe','4. Classe','5. Classe','6. Classe'];
+        else if(cn<=9) certClasses=['7. Classe','8. Classe','9. Classe'];
+        else if(cn<=12) certClasses=['10. Classe','11. Classe','12. Classe'];
+        else certClasses=['10. Classe','11. Classe','12. Classe','13. Classe'];
+
+        // Buscar notas: PRIORIDADE historico > notas correntes
+        var allGrades = {};
+        var gTotal = 0, gCount = 0;
+        var allDiscs = [];
+        var discsMap = {};
+
+        for(var ci=0; ci<certClasses.length; ci++){
+            var classe = certClasses[ci];
+            allGrades[classe] = {};
+            var discs = S.DISC[classe] || [];
+            for(var dd=0;dd<discs.length;dd++){
+                if(!discsMap[discs[dd]]){discsMap[discs[dd]]=true;allDiscs.push(discs[dd])}
+            }
+
+            // 1. Buscar do HISTÓRICO
+            var histGrades = {};
+            try {
+                var hDoc = await db.collection('schools').doc(tid)
+                    .collection('students').doc(studentId)
+                    .collection('historico').doc(classe).get();
+                if(hDoc.exists && hDoc.data().grades){
+                    histGrades = hDoc.data().grades;
+                }
+            } catch(e){}
+
+            for(var dj=0; dj<discs.length; dj++){
+                var disc = discs[dj];
+                var nota = null;
+
+                // Prioridade 1: Histórico
+                if(histGrades[disc] !== undefined){
+                    nota = Number(histGrades[disc]);
+                } else {
+                    // Prioridade 2: Notas correntes (média 3 trimestres)
+                    var dk = disc.replace(/[^a-zA-Z0-9]/g,'');
+                    var mts = [];
+                    for(var t=1;t<=3;t++){
+                        try {
+                            var gDoc = await db.collection('schools').doc(tid)
+                                .collection('grades').doc(studentId+'_'+t+'_'+dk).get();
+                            if(gDoc.exists && gDoc.data().mt != null)
+                                mts.push(gDoc.data().mt);
+                        } catch(e){}
+                    }
+                    if(mts.length > 0)
+                        nota = mts.reduce(function(a,b){return a+b},0) / mts.length;
+                }
+
+                if(nota !== null){
+                    var rounded = Math.round(nota);
+                    allGrades[classe][disc] = rounded;
+                    gTotal += rounded;
+                    gCount++;
+                }
+            }
+        }
+
+        // Gerar com o ano específico
+        var origYr = yrVal;
+        var tempGetAY = S.getActiveYear;
+        S.getActiveYear = async function(){ return {year: origYr}; };
+
+        // Usar a função existente de certificado
+        s._id = studentId;
+        await S._genCertificadosLote([s], esc);
+
+        S.getActiveYear = tempGetAY;
+
+    } catch(e){
+        S.toast('Erro: ' + e.message, 'error');
+    }
+};
+
+// =============================================
+// 3. DECLARAÇÃO — Escolher ano lectivo
+// =============================================
+S._mdDeclOptions = async function(studentId){
+    var tid = S.tid();
+
+    // Buscar anos lectivos disponíveis
+    var yearOptions = '<option value="' + new Date().getFullYear() + '">' + new Date().getFullYear() + ' (actual)</option>';
+    try {
+        var aySnap = await db.collection('schools').doc(tid).collection('academicYears').get();
+        aySnap.forEach(function(d2){
+            var y = d2.data();
+            if(y.year){
+                yearOptions += '<option value="' + y.year + '">' + y.year + (y.active ? ' (activo)' : '') + '</option>';
+            }
+        });
+    } catch(e){}
+
+    S.oModal('Gerar Declaracao',
+        '<div class="cd mb-m" style="padding:10px;background:rgba(37,99,235,.04);border-color:rgba(37,99,235,.12)">'
+        + '<p class="fs-s"><span class="material-icons-outlined" style="font-size:.85rem;vertical-align:middle;color:#2563EB;margin-right:3px">info</span>'
+        + 'Seleccione o ano lectivo para a declaracao. O sistema buscara os dados do aluno desse ano.</p></div>'
+        + '<div class="fg"><label class="fl">Ano Lectivo *</label>'
+        + '<select id="declYr" class="fs">' + yearOptions + '</select></div>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._genDeclForYear(\'' + studentId + '\')"><span class="material-icons-outlined">article</span>Gerar Declaracao</button>',
+        '450px');
+};
+
+S._genDeclForYear = async function(studentId){
+    var yrEl = document.getElementById('declYr');
+    var yrVal = yrEl ? yrEl.value : String(new Date().getFullYear());
+    S.cModal();
+
+    var tid = S.tid();
+    if(!tid){S.toast('Escola nao definida','error');return}
+
+    try {
+        var sDoc = await db.collection('schools').doc(tid).collection('students').doc(studentId).get();
+        if(!sDoc.exists){S.toast('Nao encontrado','error');return}
+        var s = sDoc.data();
+        s.id = studentId;
+        s._id = studentId;
+
+        var esc = S.school || {};
+        try{var eDoc=await db.collection('schools').doc(tid).get();if(eDoc.exists)esc=eDoc.data();esc.id=tid}catch(e){}
+
+        // Temporariamente definir o ano
+        var tempGetAY = S.getActiveYear;
+        S.getActiveYear = async function(){ return {year: yrVal}; };
+
+        await S._genDeclaracoesLote([s], esc);
+
+        S.getActiveYear = tempGetAY;
+
+    } catch(e){
+        S.toast('Erro: ' + e.message, 'error');
+    }
+};
+
+// =============================================
+// 4. LOTE — Escolher tipo com opções
+// =============================================
+var origDocLotGen = S._docLotGenerate;
+S._docLotGenerate = async function(){
+    var type = document.getElementById('docLotType');
+    if(!type) return;
+
+    if(type.value === 'certificado'){
+        S._mdCertLotOptions();
+        return;
+    }
+
+    if(type.value === 'declaracao'){
+        S._mdDeclLotOptions();
+        return;
+    }
+
+    // Para passes e boletins, usar função original
+    if(typeof origDocLotGen === 'function') await origDocLotGen.call(S);
+};
+
+// Certificado em lote com opção de ano
+S._mdCertLotOptions = function(){
+    var cl = document.getElementById('docLotCl');
+    var tm = document.getElementById('docLotTm');
+    if(!cl||!cl.value){S.toast('Seleccione a classe','error');return}
+
+    S.oModal('Certificados em Lote',
+        '<p class="fs-s mb-m">Classe: <strong>' + cl.value + '</strong>' + (tm&&tm.value?' | Turma: <strong>'+tm.value+'</strong>':'') + '</p>'
+        + '<div class="cd mb-m" style="padding:10px;background:rgba(37,99,235,.04);border-color:rgba(37,99,235,.12)">'
+        + '<p class="fs-s"><span class="material-icons-outlined" style="font-size:.85rem;vertical-align:middle;color:#2563EB;margin-right:3px">info</span>'
+        + 'O sistema buscara notas do historico e das classes anteriores automaticamente.</p></div>'
+        + '<div class="fg"><label class="fl">Ano Lectivo</label>'
+        + '<input type="text" id="certLotYr" class="fi" value="' + new Date().getFullYear() + '"></div>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._genCertLotWithYear()"><span class="material-icons-outlined">workspace_premium</span>Gerar Certificados</button>',
+        '450px');
+};
+
+S._genCertLotWithYear = async function(){
+    var yr = document.getElementById('certLotYr');
+    var yrVal = yr ? yr.value.trim() : String(new Date().getFullYear());
+    S.cModal();
+
+    var cl = document.getElementById('docLotCl');
+    var tm = document.getElementById('docLotTm');
+    if(!cl||!cl.value){S.toast('Seleccione classe','error');return}
+
+    var tid = S.tid();
+    S.toast('Gerando certificados...','info',3000);
+
+    try {
+        var students;
+        if(tm && tm.value){
+            students = await S._getStudentsByClassTurma(tid, cl.value, tm.value);
+        } else {
+            students = await S._getStudentsByClass(tid, cl.value);
+        }
+
+        if(!students.length){S.toast('Sem alunos','warn');return}
+
+        // Adicionar id
+        for(var i=0;i<students.length;i++){
+            students[i]._id = students[i].id;
+        }
+
+        var esc = S.school || {};
+        try{var eDoc=await db.collection('schools').doc(tid).get();if(eDoc.exists)esc=eDoc.data();esc.id=tid}catch(e){}
+
+        var tempGetAY = S.getActiveYear;
+        S.getActiveYear = async function(){ return {year: yrVal}; };
+
+        await S._genCertificadosLote(students, esc);
+
+        S.getActiveYear = tempGetAY;
+
+    } catch(e){ S.toast('Erro: '+e.message,'error'); }
+};
+
+// Declaração em lote com ano
+S._mdDeclLotOptions = async function(){
+    var cl = document.getElementById('docLotCl');
+    var tm = document.getElementById('docLotTm');
+    if(!cl||!cl.value){S.toast('Seleccione a classe','error');return}
+
+    var tid = S.tid();
+    var yearOptions = '<option value="'+new Date().getFullYear()+'">'+new Date().getFullYear()+'</option>';
+    try {
+        var aySnap=await db.collection('schools').doc(tid).collection('academicYears').get();
+        aySnap.forEach(function(d2){
+            var y=d2.data();
+            if(y.year) yearOptions+='<option value="'+y.year+'">'+y.year+(y.active?' (activo)':'')+'</option>';
+        });
+    } catch(e){}
+
+    S.oModal('Declaracoes em Lote',
+        '<p class="fs-s mb-m">Classe: <strong>'+cl.value+'</strong>'+(tm&&tm.value?' | Turma: <strong>'+tm.value+'</strong>':'')+'</p>'
+        + '<div class="fg"><label class="fl">Ano Lectivo *</label>'
+        + '<select id="declLotYr" class="fs">'+yearOptions+'</select></div>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-r" onclick="S._genDeclLotWithYear()"><span class="material-icons-outlined">article</span>Gerar Declaracoes</button>',
+        '450px');
+};
+
+S._genDeclLotWithYear = async function(){
+    var yr = document.getElementById('declLotYr');
+    var yrVal = yr ? yr.value : String(new Date().getFullYear());
+    S.cModal();
+
+    var cl = document.getElementById('docLotCl');
+    var tm = document.getElementById('docLotTm');
+    if(!cl||!cl.value) return;
+
+    var tid = S.tid();
+    S.toast('Gerando declaracoes...','info',3000);
+
+    try {
+        var students;
+        if(tm && tm.value){
+            students = await S._getStudentsByClassTurma(tid, cl.value, tm.value);
+        } else {
+            students = await S._getStudentsByClass(tid, cl.value);
+        }
+
+        if(!students.length){S.toast('Sem alunos','warn');return}
+
+        for(var i=0;i<students.length;i++) students[i]._id = students[i].id;
+
+        var esc = S.school || {};
+        try{var eDoc=await db.collection('schools').doc(tid).get();if(eDoc.exists)esc=eDoc.data();esc.id=tid}catch(e){}
+
+        var tempGetAY = S.getActiveYear;
+        S.getActiveYear = async function(){ return {year: yrVal}; };
+
+        await S._genDeclaracoesLote(students, esc);
+
+        S.getActiveYear = tempGetAY;
+
+    } catch(e){ S.toast('Erro: '+e.message,'error'); }
+};
+
+console.log('Certificado busca historico + notas correntes');
+console.log('Declaracao permite escolher ano lectivo');
+console.log('Individual e lote com opcoes');
+
+})();
+</script>
+<!-- ================================================
+     FIM
+     ================================================ -->
 </body>
 </html>
