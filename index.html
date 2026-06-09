@@ -26355,5 +26355,430 @@ console.log('Relatorio faltas + Alterar credenciais carregados');
 <!-- ================================================
      FIM
      ================================================ -->
+<!-- ================================================
+     RELATÓRIOS COMPLETOS + XLSX DADOS
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// 1. MENU RELATÓRIOS COMPLETOS
+// =============================================
+var origMenu = S.getMenu;
+S.getMenu = function(role){
+    var m = origMenu.call(this, role);
+    
+    if(['diretor','subdiretor_pedagogico','subdiretor_administrativo','secretaria','super_admin'].indexOf(role) >= 0){
+        var exists = false;
+        for(var i=0;i<m.length;i++){ if(m[i].p === 'full-reports') exists = true; }
+        if(!exists){
+            m.push({s:'RELATORIOS',p:'full-reports',i:'download',l:'Ficheiros Completos'});
+        }
+    }
+    return m;
+};
+
+S._routes['full-reports'] = function(){ S._pgFullReports(); };
+S._titles['full-reports'] = 'Ficheiros Completos';
+
+S._pgFullReports = function(){
+    var pc = document.getElementById('pgC');
+
+    pc.innerHTML = '<div class="fade">'
+        + '<h2 class="fw8 fs-l mb-l">Ficheiros Completos para Download</h2>'
+
+        // Alunos
+        + '<div class="cd mb-m">'
+        + '<h3 class="fw7 fs-m mb-m"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#2563EB;font-size:1rem">people</span>Dados dos Estudantes</h3>'
+        + '<p class="tm fs-s mb-m">Todos os dados pessoais, academicos, filiacao e contactos de todos os estudantes.</p>'
+        + '<div style="display:flex;gap:5px;flex-wrap:wrap">'
+        + '<button class="btn btn-g btn-s" onclick="S._dlStudentsFullXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>Dados Alunos XLSX</button>'
+        + '<button class="btn btn-r btn-s" onclick="S._dlStudentsWithGradesXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">grading</span>Alunos + Notas XLSX</button>'
+        + '</div></div>'
+
+        // Funcionários
+        + '<div class="cd mb-m">'
+        + '<h3 class="fw7 fs-m mb-m"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#059669;font-size:1rem">badge</span>Dados dos Funcionarios</h3>'
+        + '<p class="tm fs-s mb-m">Todos os dados pessoais, profissionais, academicos e bancarios de todos os funcionarios incluindo o director.</p>'
+        + '<div style="display:flex;gap:5px;flex-wrap:wrap">'
+        + '<button class="btn btn-g btn-s" onclick="S._dlStaffFullXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>Dados Funcionarios XLSX</button>'
+        + '</div></div>'
+
+        // Tudo junto
+        + '<div class="cd">'
+        + '<h3 class="fw7 fs-m mb-m"><span class="material-icons-outlined" style="vertical-align:middle;margin-right:5px;color:#D4A017;font-size:1rem">folder</span>Ficheiro Completo da Escola</h3>'
+        + '<p class="tm fs-s mb-m">Um unico ficheiro XLSX com todas as abas: alunos, notas, funcionarios, turmas.</p>'
+        + '<button class="btn btn-r" onclick="S._dlSchoolFullXLSX()"><span class="material-icons-outlined">download</span>Baixar Ficheiro Completo</button>'
+        + '</div></div>';
+};
+
+// =============================================
+// 2. XLSX ALUNOS COMPLETO
+// =============================================
+S._dlStudentsFullXLSX = async function(){
+    var tid = S.tid();
+    if(!tid){S.toast('Escola nao definida','error');return}
+    S.toast('Preparando ficheiro...','info',3000);
+
+    try {
+        var snap = await db.collection('schools').doc(tid).collection('students').get();
+        if(snap.empty){S.toast('Sem alunos','warn');return}
+
+        var data = [];
+        var n = 0;
+
+        snap.forEach(function(d2){
+            n++;
+            var s = d2.data();
+            data.push({
+                'N.': n,
+                'Nome Completo': s.name || '',
+                'Sexo': s.sex || '',
+                'Data Nascimento': s.dob || '',
+                'Nacionalidade': s.nationality || '',
+                'Naturalidade': s.naturalidade || '',
+                'Provincia Origem': s.provOrigem || '',
+                'BI': s.bi || '',
+                'Data BI': s.biDate || '',
+                'Local BI': s.biLocal || '',
+                'NIF': s.nif || '',
+                'Grupo Sanguineo': s.bloodType || '',
+                'N. Processo': s.process || '',
+                'N. Matricula': s.matricula || '',
+                'Classe': s.classe || '',
+                'Turma': s.turma || '',
+                'Turno': s.turno || '',
+                'Ano Ingresso': s.yearIngresso || '',
+                'Escola Anterior': s.previousSchool || '',
+                'Estado Academico': s.status || '',
+                'Estado Financeiro': s.financialStatus || '',
+                'Nome do Pai': s.fatherName || '',
+                'Nome da Mae': s.motherName || '',
+                'Encarregado': s.guardian || '',
+                'Parentesco': s.guardianRelation || '',
+                'BI Encarregado': s.guardianBI || '',
+                'Tel. Encarregado 1': s.guardianPhone || '',
+                'Tel. Encarregado 2': s.guardianPhone2 || '',
+                'Email Encarregado': s.guardianEmail || '',
+                'Profissao Enc.': s.guardianJob || '',
+                'Provincia Morada': s.addrProvince || '',
+                'Municipio': s.addrMunicipality || '',
+                'Bairro': s.addrBairro || '',
+                'Rua': s.addrRua || '',
+                'Nec. Especiais': s.specialNeeds || '',
+                'Alergias': s.allergies || '',
+                'Doenca Cronica': s.chronicDisease || '',
+                'Medicacao': s.medication || '',
+                'Hospital Ref.': s.hospital || '',
+                'Observacoes': s.observations || ''
+            });
+        });
+
+        data.sort(function(a,b){ return (a['Nome Completo']||'').localeCompare(b['Nome Completo']||''); });
+
+        var ws = XLSX.utils.json_to_sheet(data);
+        var wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Estudantes');
+        XLSX.writeFile(wb, 'Dados_Completos_Alunos_' + new Date().toISOString().split('T')[0] + '.xlsx');
+        S.toast(n + ' alunos exportados!', 'success');
+
+    } catch(e){ S.toast('Erro: ' + e.message, 'error'); }
+};
+
+// =============================================
+// 3. XLSX ALUNOS + NOTAS
+// =============================================
+S._dlStudentsWithGradesXLSX = async function(){
+    var tid = S.tid();
+    if(!tid){S.toast('Escola nao definida','error');return}
+    S.toast('Preparando (pode demorar)...','info',5000);
+
+    try {
+        var snap = await db.collection('schools').doc(tid).collection('students').get();
+        if(snap.empty){S.toast('Sem alunos','warn');return}
+
+        var wb = XLSX.utils.book_new();
+
+        // Agrupar por classe
+        var byClass = {};
+        snap.forEach(function(d2){
+            var s = d2.data();
+            s._id = d2.id;
+            var cl = s.classe || 'N-D';
+            if(!byClass[cl]) byClass[cl] = [];
+            byClass[cl].push(s);
+        });
+
+        var classes = Object.keys(byClass).sort();
+
+        for(var ci = 0; ci < classes.length; ci++){
+            var classe = classes[ci];
+            var students = byClass[classe];
+            students.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+
+            var discs = S.DISC[classe] || [];
+            var data = [];
+
+            for(var si = 0; si < students.length; si++){
+                var s = students[si];
+                var row = {
+                    'N.': si + 1,
+                    'Nome': s.name || '',
+                    'Sexo': s.sex || '',
+                    'Classe': s.classe || '',
+                    'Turma': s.turma || '',
+                    'Turno': s.turno || '',
+                    'Processo': s.process || '',
+                    'Estado': s.status || ''
+                };
+
+                // Notas por disciplina
+                for(var di = 0; di < discs.length; di++){
+                    var disc = discs[di];
+                    var dk = disc.replace(/[^a-zA-Z0-9]/g, '');
+
+                    for(var t = 1; t <= 3; t++){
+                        try {
+                            var gDoc = await db.collection('schools').doc(tid).collection('grades')
+                                .doc(s._id + '_' + t + '_' + dk).get();
+                            if(gDoc.exists){
+                                var gd = gDoc.data();
+                                row[disc + ' MAC T' + t] = gd.mac != null ? gd.mac : '';
+                                row[disc + ' NPT T' + t] = gd.npt != null ? gd.npt : '';
+                                row[disc + ' MT T' + t] = gd.mt != null ? gd.mt : '';
+                            }
+                        } catch(e){}
+                    }
+
+                    // Média final
+                    var mts = [];
+                    for(var t2 = 1; t2 <= 3; t2++){
+                        var mtKey = disc + ' MT T' + t2;
+                        if(row[mtKey] !== undefined && row[mtKey] !== '') mts.push(Number(row[mtKey]));
+                    }
+                    row[disc + ' MF'] = mts.length > 0 ? Math.round(mts.reduce(function(a,b){return a+b},0) / mts.length) : '';
+                }
+
+                data.push(row);
+            }
+
+            var ws = XLSX.utils.json_to_sheet(data);
+            var sheetName = classe.substring(0, 31);
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        }
+
+        XLSX.writeFile(wb, 'Alunos_Notas_' + new Date().toISOString().split('T')[0] + '.xlsx');
+        S.toast('Ficheiro com notas exportado!', 'success');
+
+    } catch(e){ S.toast('Erro: ' + e.message, 'error'); }
+};
+
+// =============================================
+// 4. XLSX FUNCIONÁRIOS COMPLETO (incluindo director)
+// =============================================
+S._dlStaffFullXLSX = async function(){
+    var tid = S.tid();
+    if(!tid){S.toast('Escola nao definida','error');return}
+    S.toast('Preparando...','info',2000);
+
+    try {
+        var data = [];
+        var n = 0;
+
+        // Funcionários da colecção staff
+        var snap = await db.collection('schools').doc(tid).collection('staff').get();
+        snap.forEach(function(d2){
+            n++;
+            var f = d2.data();
+            data.push(S._staffToRow(n, f));
+        });
+
+        // Adicionar director e subdirectores (da colecção users)
+        var usSnap = await db.collection('users').where('tenantId', '==', tid).get();
+        usSnap.forEach(function(d2){
+            var u = d2.data();
+            if(u.role === 'diretor' || u.role === 'subdiretor_pedagogico' || u.role === 'subdiretor_administrativo'){
+                // Verificar se já não está na lista de staff
+                var exists = false;
+                for(var i = 0; i < data.length; i++){
+                    if(data[i]['Nome Completo'] === u.name) exists = true;
+                }
+                if(!exists){
+                    n++;
+                    data.push(S._staffToRow(n, u));
+                }
+            }
+        });
+
+        data.sort(function(a,b){ return (a['Nome Completo']||'').localeCompare(b['Nome Completo']||''); });
+
+        var ws = XLSX.utils.json_to_sheet(data);
+        var wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Funcionarios');
+        XLSX.writeFile(wb, 'Dados_Completos_Funcionarios_' + new Date().toISOString().split('T')[0] + '.xlsx');
+        S.toast(n + ' funcionarios exportados!', 'success');
+
+    } catch(e){ S.toast('Erro: ' + e.message, 'error'); }
+};
+
+S._staffToRow = function(n, f){
+    return {
+        'N.': n,
+        'Nome Completo': f.name || '',
+        'Sexo': f.sex || '',
+        'Data Nascimento': f.dob || '',
+        'Nacionalidade': f.nationality || '',
+        'Naturalidade': f.naturalidade || '',
+        'Provincia Origem': f.provOrigem || '',
+        'Estado Civil': f.maritalStatus || '',
+        'N. Filhos': f.children || '',
+        'BI': f.bi || '',
+        'Data BI': f.biDate || '',
+        'Local BI': f.biLocal || '',
+        'NIF': f.nif || '',
+        'Passaporte': f.passport || '',
+        'INSS': f.inss || '',
+        'Cargo': f.cargo || f.role || '',
+        'Funcao': f.funcao || '',
+        'Departamento': f.department || '',
+        'Categoria Prof.': f.professionalCategory || '',
+        'N. Mecanografico': f.mecNumber || '',
+        'N. Agente': f.agentNumber || '',
+        'Data Admissao': f.admissionDate || '',
+        'Tipo Contrato': f.contractType || '',
+        'Turno': f.shift || '',
+        'Anos Servico': f.serviceYears || '',
+        'Nivel Academico': f.academicLevel || '',
+        'Formacao': f.formacao || '',
+        'Instituicao': f.institution || '',
+        'Ano Conclusao': f.graduationYear || '',
+        'Outras Formacoes': f.otherFormation || '',
+        'Telefone 1': f.phone || '',
+        'Telefone 2': f.phone2 || '',
+        'Email': f.email || '',
+        'Email Institucional': f.emailInst || '',
+        'Morada': f.address || '',
+        'Municipio': f.addrMunicipality || '',
+        'Provincia': f.addrProvince || '',
+        'Contacto Emergencia': f.emergencyContact || '',
+        'Salario': f.salary || '',
+        'Subsidios': f.subsidies || '',
+        'Banco': f.bank || '',
+        'IBAN': f.iban || '',
+        'Grupo Sanguineo': f.bloodType || '',
+        'Alergias': f.allergies || '',
+        'Doenca Cronica': f.chronicDisease || '',
+        'Deficiencia': f.disability || '',
+        'Medicacao': f.medication || '',
+        'Observacoes': f.observations || ''
+    };
+};
+
+// =============================================
+// 5. XLSX COMPLETO DA ESCOLA (tudo num ficheiro)
+// =============================================
+S._dlSchoolFullXLSX = async function(){
+    var tid = S.tid();
+    if(!tid){S.toast('Escola nao definida','error');return}
+    S.toast('Preparando ficheiro completo (pode demorar)...','info',5000);
+
+    try {
+        var wb = XLSX.utils.book_new();
+
+        // Aba 1: Estudantes completos
+        var studSnap = await db.collection('schools').doc(tid).collection('students').get();
+        var studData = [];
+        var sn = 0;
+        studSnap.forEach(function(d2){
+            sn++;
+            var s = d2.data();
+            studData.push({
+                'N.':sn,'Nome':s.name||'','Sexo':s.sex||'','Nascimento':s.dob||'',
+                'Nacionalidade':s.nationality||'','Naturalidade':s.naturalidade||'',
+                'BI':s.bi||'','NIF':s.nif||'','Processo':s.process||'','Matricula':s.matricula||'',
+                'Classe':s.classe||'','Turma':s.turma||'','Turno':s.turno||'',
+                'Estado':s.status||'','Financeiro':s.financialStatus||'',
+                'Pai':s.fatherName||'','Mae':s.motherName||'','Encarregado':s.guardian||'',
+                'Tel.Enc.':s.guardianPhone||'','Email Enc.':s.guardianEmail||'',
+                'Morada':((s.addrRua||'')+' '+(s.addrBairro||'')+' '+(s.addrMunicipality||'')).trim(),
+                'Sangue':s.bloodType||'','Alergias':s.allergies||'',
+                'Obs':s.observations||''
+            });
+        });
+        studData.sort(function(a,b){return(a.Nome||'').localeCompare(b.Nome||'')});
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(studData), 'Estudantes');
+
+        // Aba 2: Funcionários completos
+        var staffSnap = await db.collection('schools').doc(tid).collection('staff').get();
+        var staffData = [];
+        var fn2 = 0;
+        staffSnap.forEach(function(d2){ fn2++; staffData.push(S._staffToRow(fn2, d2.data())); });
+
+        // Adicionar director
+        var usSnap2 = await db.collection('users').where('tenantId','==',tid).get();
+        usSnap2.forEach(function(d2){
+            var u = d2.data();
+            if(['diretor','subdiretor_pedagogico','subdiretor_administrativo'].indexOf(u.role)>=0){
+                var ex=false;for(var i=0;i<staffData.length;i++){if(staffData[i]['Nome Completo']===u.name)ex=true}
+                if(!ex){fn2++;staffData.push(S._staffToRow(fn2,u))}
+            }
+        });
+        staffData.sort(function(a,b){return(a['Nome Completo']||'').localeCompare(b['Nome Completo']||'')});
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(staffData), 'Funcionarios');
+
+        // Aba 3: Turmas
+        var turmaSnap = await db.collection('schools').doc(tid).collection('turmas').get();
+        var turmaData = [];
+        turmaSnap.forEach(function(d2){
+            var t = d2.data();
+            turmaData.push({Classe:t.classe,Turma:t.turma,Turno:t.turno,Sala:t.sala,Capacidade:t.capacidade,Curso:t.curso||'',Estado:t.active!==false?'Activa':'Inactiva'});
+        });
+        if(turmaData.length>0) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(turmaData), 'Turmas');
+
+        // Aba 4: Finanças
+        var finSnap = await db.collection('schools').doc(tid).collection('finances').get();
+        var finData = [];
+        finSnap.forEach(function(d2){
+            var f = d2.data();
+            finData.push({Data:f.date||'',Tipo:f.type||'',Descricao:f.description||'',Servico:f.service||f.category||'',Aluno:f.studentName||'',Valor:f.amount||0,Operador:f.operator||''});
+        });
+        if(finData.length>0) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(finData), 'Financeiro');
+
+        XLSX.writeFile(wb, 'Escola_Completo_' + new Date().toISOString().split('T')[0] + '.xlsx');
+        S.toast('Ficheiro completo exportado!', 'success');
+
+    } catch(e){ S.toast('Erro: ' + e.message, 'error'); }
+};
+
+// =============================================
+// 6. BOTÃO XLSX NA LISTA DE ESTUDANTES
+// =============================================
+var origStudRoute = S._routes['students'];
+S._routes['students'] = function(){
+    if(typeof origStudRoute === 'function') origStudRoute.call(S);
+    
+    setTimeout(function(){
+        var hdr = document.querySelector('#pgC .fb');
+        if(!hdr) return;
+        var btns = hdr.querySelector('div:last-child');
+        if(!btns) return;
+        if(btns.innerHTML.indexOf('dlStudFull') >= 0) return;
+
+        btns.insertAdjacentHTML('afterbegin',
+            '<button class="btn btn-g btn-s" onclick="S._dlStudentsFullXLSX()" id="dlStudFull" title="Dados Completos XLSX"><span class="material-icons-outlined" style="font-size:.85rem">download</span>Dados Completos</button>');
+    }, 600);
+};
+
+console.log('Relatorios completos + XLSX dados carregados');
+console.log('  Alunos: dados completos XLSX (40 campos)');
+console.log('  Alunos + Notas: uma aba por classe com MAC/NPT/MT/MF');
+console.log('  Funcionarios: dados completos XLSX (45 campos) incluindo director');
+console.log('  Escola completa: tudo num ficheiro (alunos+staff+turmas+financas)');
+
+})();
+</script>
+<!-- ================================================
+     FIM RELATÓRIOS COMPLETOS
+     ================================================ -->
 </body>
 </html>
