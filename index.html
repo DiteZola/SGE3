@@ -27699,5 +27699,387 @@ console.log('Debug: S.CERT_debug(studentId) para verificar');
 <!-- ================================================
      FIM
      ================================================ -->
+<!-- ================================================
+     CERTIFICADO — BUSCA HISTÓRICO DEFINITIVA
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// BUSCAR HISTÓRICO — Função universal
+// =============================================
+S.HIST_fetch = async function(tid, studentId){
+    // Retorna TODAS as notas do histórico do aluno
+    // organizadas por número da classe
+    var result = {}; // { 1: {grades:{...}}, 2: {grades:{...}}, ... }
+
+    if(!tid || !studentId) return result;
+
+    try {
+        var histCol = db.collection('schools').doc(tid)
+            .collection('students').doc(studentId)
+            .collection('historico');
+
+        var allDocs = await histCol.get();
+
+        allDocs.forEach(function(docSnap){
+            var data = docSnap.data();
+            var grades = data.grades || {};
+
+            // Extrair número da classe do nome do documento ou campo classe
+            var docName = docSnap.id;
+            var classeField = data.classe || docName;
+
+            // Extrair número
+            var num = parseInt(classeField.replace(/[^0-9]/g, ''));
+            if(isNaN(num)) return;
+
+            result[num] = {
+                docId: docSnap.id,
+                classe: classeField,
+                grades: grades,
+                count: Object.keys(grades).length
+            };
+        });
+
+    } catch(e){
+        console.log('HIST_fetch erro:', e.message);
+    }
+
+    return result;
+};
+
+// =============================================
+// CERTIFICADO PDF — Versão que funciona
+// =============================================
+S.CERT_buildPDF = async function(students, esc, certNum, yrVal){
+    var jsPDF2 = window.jspdf.jsPDF;
+    var pdfDoc = new jsPDF2('p','mm','a4');
+    var tid = S.tid();
+
+    var insignia = null;
+    try { insignia = await S._getInsigniaForPDF(); } catch(e){}
+    var dirSex = '';
+    try { dirSex = await S._fetchDirSex(); } catch(e){}
+    var dirName = '________________________';
+    try { dirName = await S._fetchDirName(); } catch(e){}
+
+    // Determinar classes e nível
+    var alinea, nivel, classNumbers;
+
+    if(certNum <= 6){
+        alinea = 'b)'; nivel = 'o Ensino Primario';
+        classNumbers = [1,2,3,4,5,6];
+    } else if(certNum <= 9){
+        alinea = 'c)'; nivel = 'o I Ciclo do Ensino Secundario Geral';
+        classNumbers = [7,8,9];
+    } else if(certNum <= 12){
+        alinea = 'e)'; nivel = 'o II Ciclo do Ensino Secundario Geral';
+        classNumbers = [10,11,12];
+    } else {
+        alinea = 'e)'; nivel = 'o II Ciclo do Ensino Secundario Geral';
+        classNumbers = [10,11,12,13];
+    }
+
+    // Nomes das classes para o DISC e cabeçalho da tabela
+    var classNames = classNumbers.map(function(n){ return n + '. Classe'; });
+    var discClassNames = classNumbers.map(function(n){ return n + 'ª Classe'; });
+
+    // Recolher TODAS as disciplinas únicas (sem repetição)
+    var allDiscs = [];
+    var discSet = {};
+
+    for(var ci = 0; ci < discClassNames.length; ci++){
+        var discs = S.DISC[discClassNames[ci]] || [];
+        for(var di = 0; di < discs.length; di++){
+            if(!discSet[discs[di]]){
+                discSet[discs[di]] = true;
+                allDiscs.push(discs[di]);
+            }
+        }
+    }
+
+    // Para cada aluno
+    for(var si = 0; si < students.length; si++){
+        if(si > 0) pdfDoc.addPage();
+        var s = students[si];
+        var sid = s._id || s.id || '';
+        var isFem = s.sex === 'Feminino';
+
+        // Curso apenas II Ciclo
+        var curso = '';
+        if(certNum >= 10){
+            try { curso = await S._getStudentCurso(sid, s.classe, s.turma); } catch(e){}
+        }
+
+        // Datas
+        var dobT = '___/___/______';
+        try { if(s.dob) dobT = new Date(s.dob+'T00:00:00').toLocaleDateString('pt-AO'); } catch(e){ if(s.dob) dobT = s.dob; }
+        var biDT = '___/___/______';
+        try { if(s.biDate) biDT = new Date(s.biDate+'T00:00:00').toLocaleDateString('pt-AO'); } catch(e){ if(s.biDate) biDT = s.biDate; }
+
+        // ==================================
+        // BUSCAR NOTAS DO HISTÓRICO
+        // ==================================
+        var histData = await S.HIST_fetch(tid, sid);
+
+        // Organizar notas por classe e disciplina
+        var gradeTable = {}; // { "1. Classe": { "Língua Portuguesa": 8, ... }, ... }
+        var totalNotas = 0;
+        var somaNotas = 0;
+
+        for(var cni = 0; cni < classNumbers.length; cni++){
+            var classNum = classNumbers[cni];
+            var className = classNames[cni];
+            gradeTable[className] = {};
+
+            var histEntry = histData[classNum];
+            if(!histEntry || !histEntry.grades) continue;
+
+            var grades = histEntry.grades;
+
+            // Para cada disciplina desta classe
+            var discClassName = discClassNames[cni];
+            var classDiscs = S.DISC[discClassName] || [];
+
+            for(var dci = 0; dci < classDiscs.length; dci++){
+                var discName = classDiscs[dci];
+
+                // Tentar nome exacto
+                var nota = grades[discName];
+
+                // Se não encontrar, tentar case-insensitive
+                if(nota === undefined || nota === null){
+                    for(var gk in grades){
+                        if(gk.toLowerCase().trim() === discName.toLowerCase().trim()){
+                            nota = grades[gk];
+                            break;
+                        }
+                    }
+                }
+
+                // Se não encontrar, tentar nome parcial
+                if(nota === undefined || nota === null){
+                    for(var gk2 in grades){
+                        if(discName.indexOf(gk2) >= 0 || gk2.indexOf(discName) >= 0){
+                            nota = grades[gk2];
+                            break;
+                        }
+                    }
+                }
+
+                if(nota !== undefined && nota !== null){
+                    var rounded = Math.round(Number(nota));
+                    if(!isNaN(rounded)){
+                        gradeTable[className][discName] = rounded;
+                        somaNotas += rounded;
+                        totalNotas++;
+                    }
+                }
+            }
+        }
+
+        var mediaFinal = totalNotas > 0 ? Math.round(somaNotas / totalNotas) : 0;
+
+        // ==================================
+        // CABEÇALHO
+        // ==================================
+        if(insignia){ try { pdfDoc.addImage(insignia,'PNG',92,6,16,16); } catch(e){} }
+        pdfDoc.setFontSize(13);pdfDoc.setFont('helvetica','bold');pdfDoc.setTextColor(0,0,0);
+        pdfDoc.text('REPUBLICA DE ANGOLA',105,26,{align:'center'});
+        pdfDoc.setFontSize(11);pdfDoc.setFont('helvetica','normal');
+        pdfDoc.text('MINISTERIO DA EDUCACAO',105,33,{align:'center'});
+        pdfDoc.setFontSize(18);pdfDoc.setFont('helvetica','bold');
+        pdfDoc.text('CERTIFICADO',105,44,{align:'center'});
+
+        // Escola ref
+        var escolaRef = '';
+        if(esc.number){
+            escolaRef = 'Complexo Escolar N. ' + esc.number;
+            if(certNum >= 10 && curso) escolaRef += ', denominado ' + curso;
+        } else { escolaRef = esc.name || ''; }
+
+        var nomeAluno = s.name || '________________________';
+        var mediaTexto = mediaFinal + ' valores';
+
+        // ==================================
+        // CORPO CONTÍNUO
+        // ==================================
+        var corpoTexto = dirName + ', ' + S._txtDir(dirSex) + ' do ' + escolaRef
+            + (esc.decree ? ', criado sob o ' + esc.decree : '')
+            + ', ao abrigo do disposto na alinea ' + alinea
+            + ' do artigo 109. da Lei n. 32/20 de 12 de Agosto, certifica que '
+            + nomeAluno
+            + ', filh' + (isFem?'a':'o') + ' de ' + (s.fatherName||'________________________')
+            + ' e de ' + (s.motherName||'________________________')
+            + ', nascid' + (isFem?'a':'o') + ' aos ' + dobT
+            + ', natural de ' + (s.naturalidade||'________________')
+            + ', provincia ' + (s.provOrigem||'________________')
+            + ', portador' + (isFem?'a':'') + ' do B.I. n. ' + (s.bi||'________________')
+            + ', passado pelo Arquivo de Identificacao ' + (s.biLocal?'de '+s.biLocal:'de ________________')
+            + ' aos ' + biDT
+            + ', concluiu no ano lectivo ' + yrVal + ' ' + nivel
+            + (certNum>=10 && curso ? ', na area de '+curso : '')
+            + ', conforme consta do processo individual n. ' + (s.process||'________________')
+            + ', com a media final de ' + mediaTexto
+            + ', obtida pelas seguintes classificacoes por disciplina:';
+
+        // Renderizar texto com destaques
+        pdfDoc.setFontSize(10);
+        var linhas = pdfDoc.splitTextToSize(corpoTexto, 170);
+        var yPos = 52;
+
+        for(var li = 0; li < linhas.length; li++){
+            var linha = linhas[li];
+            var posNome = linha.indexOf(nomeAluno);
+            var posMedia = linha.indexOf(mediaTexto);
+
+            if(posNome >= 0){
+                var a1 = linha.substring(0, posNome);
+                var a2 = linha.substring(posNome + nomeAluno.length);
+                var xP = 20;
+                pdfDoc.setTextColor(0,0,0);pdfDoc.setFont('helvetica','normal');
+                if(a1){ pdfDoc.text(a1,xP,yPos); xP+=pdfDoc.getTextWidth(a1); }
+                pdfDoc.setTextColor(204,27,43);pdfDoc.setFont('helvetica','bold');
+                pdfDoc.text(nomeAluno,xP,yPos); xP+=pdfDoc.getTextWidth(nomeAluno);
+                pdfDoc.setTextColor(0,0,0);pdfDoc.setFont('helvetica','normal');
+                if(a2) pdfDoc.text(a2,xP,yPos);
+            } else if(posMedia >= 0){
+                var b1 = linha.substring(0,posMedia);
+                var b2 = linha.substring(posMedia+mediaTexto.length);
+                var xM = 20;
+                pdfDoc.setTextColor(0,0,0);pdfDoc.setFont('helvetica','normal');
+                if(b1){ pdfDoc.text(b1,xM,yPos); xM+=pdfDoc.getTextWidth(b1); }
+                pdfDoc.setFont('helvetica','bold');
+                pdfDoc.text(mediaTexto,xM,yPos); xM+=pdfDoc.getTextWidth(mediaTexto);
+                pdfDoc.setFont('helvetica','normal');
+                if(b2) pdfDoc.text(b2,xM,yPos);
+            } else {
+                pdfDoc.setTextColor(0,0,0);pdfDoc.setFont('helvetica','normal');
+                pdfDoc.text(linha,20,yPos);
+            }
+            yPos += 4.5;
+        }
+
+        var tableY = yPos + 4;
+
+        // Aviso se sem notas
+        if(totalNotas === 0){
+            pdfDoc.setFontSize(9);pdfDoc.setTextColor(220,38,38);pdfDoc.setFont('helvetica','bold');
+            pdfDoc.text('ATENCAO: Nenhuma nota encontrada no historico escolar.',20,tableY);
+            pdfDoc.text('Va ao menu Historico Escolar, seleccione o aluno e preencha as notas.',20,tableY+4);
+            pdfDoc.setTextColor(0,0,0);pdfDoc.setFont('helvetica','normal');
+            tableY += 10;
+        }
+
+        // ==================================
+        // TABELA DE NOTAS
+        // ==================================
+        var colHeaders = ['Disciplinas'];
+        for(var th = 0; th < classNumbers.length; th++){
+            colHeaders.push(classNumbers[th] + '.a Classe');
+        }
+        colHeaders.push('Media Final');
+        colHeaders.push('Media Por Extenso');
+
+        var tableRows = [];
+
+        for(var dri = 0; dri < allDiscs.length; dri++){
+            var discNome = allDiscs[dri];
+            var row = [discNome];
+            var discSoma = 0;
+            var discCount = 0;
+
+            for(var cri = 0; cri < classNames.length; cri++){
+                var clN = classNames[cri];
+                var gradeVal = gradeTable[clN] && gradeTable[clN][discNome] !== undefined
+                    ? gradeTable[clN][discNome] : undefined;
+
+                if(gradeVal !== undefined){
+                    row.push(gradeVal);
+                    discSoma += gradeVal;
+                    discCount++;
+                } else {
+                    row.push('-');
+                }
+            }
+
+            var discMedia = discCount > 0 ? Math.round(discSoma / discCount) : '-';
+            var discExtenso = discMedia !== '-' ? S._intToWords(discMedia) : '-';
+            row.push(discMedia);
+            row.push(discExtenso);
+            tableRows.push(row);
+        }
+
+        pdfDoc.autoTable({
+            startY: tableY,
+            head: [colHeaders],
+            body: tableRows,
+            styles: {fontSize:7.5, cellPadding:2, halign:'center', lineColor:[180,180,180], lineWidth:0.15},
+            headStyles: {fillColor:[245,243,240], textColor:[30,30,30], fontStyle:'bold', fontSize:7},
+            columnStyles: {
+                0: {halign:'left', cellWidth:38},
+                [classNumbers.length+1]: {fontStyle:'bold'},
+                [classNumbers.length+2]: {halign:'left', fontSize:6.5, cellWidth:28}
+            },
+            alternateRowStyles: {fillColor:[254,253,250]},
+            margin: {left:18, right:18},
+            didParseCell: function(cd){
+                if(cd.section === 'body'){
+                    if(cd.cell.raw === '-') cd.cell.styles.textColor = [190,190,190];
+                    else if(cd.column.index >= 1 && cd.column.index <= classNumbers.length+1){
+                        var v = Number(cd.cell.raw);
+                        if(!isNaN(v)) cd.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            }
+        });
+
+        var afterY = pdfDoc.lastAutoTable.finalY + 6;
+        if(afterY > 235){ pdfDoc.addPage(); afterY = 20; }
+
+        // Texto final
+        var endText = 'Para efeitos legais, e passado o presente CERTIFICADO, que consta no livro de registo n. '
+            + (s.process||'____') + ', folha ' + certNum + '-' + yrVal
+            + ', assinado por mim e autenticado com carimbo a oleo / selo branco em uso neste estabelecimento de ensino.';
+        pdfDoc.setFontSize(10);pdfDoc.setFont('helvetica','normal');pdfDoc.setTextColor(0,0,0);
+        var eLines = pdfDoc.splitTextToSize(endText,170);
+        pdfDoc.text(eLines,20,afterY);
+        afterY += eLines.length * 4.5 + 8;
+
+        // Data
+        var meses = ['JANEIRO','FEVEREIRO','MARCO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+        pdfDoc.text((esc.name||esc.municipality||'LUANDA').toUpperCase()+', AOS '+new Date().getDate()+' DE '+meses[new Date().getMonth()]+' DE '+new Date().getFullYear(),105,afterY,{align:'center'});
+        afterY += 10;
+        pdfDoc.text('Conferido por:',20,afterY);
+        afterY += 14;
+        pdfDoc.setDrawColor(0);pdfDoc.setLineWidth(0.3);
+        pdfDoc.line(55,afterY,155,afterY);afterY+=8;
+        pdfDoc.setFontSize(11);pdfDoc.setFont('helvetica','bold');
+        pdfDoc.text(S._sigDir(dirSex),105,afterY,{align:'center'});afterY+=6;
+        pdfDoc.line(55,afterY,155,afterY);afterY+=5;
+        pdfDoc.setFontSize(10);pdfDoc.setFont('helvetica','normal');
+        pdfDoc.text(dirName,105,afterY,{align:'center'});
+        try{await S.addQR(pdfDoc,'SGE|CERT|'+(s.name||'')+'|MF:'+mediaFinal,170,afterY-28,18)}catch(e){}
+    }
+
+    pdfDoc.save(students.length===1?'Certificado_'+(students[0].name||'').replace(/\s+/g,'_')+'.pdf':'Certificados_'+students.length+'.pdf');
+    S.toast(students.length+' certificado(s) gerado(s)!','success');
+};
+
+// Redirecionar
+S._genCertificadosLote = S.CERT_buildPDF;
+
+console.log('CERTIFICADO DEFINITIVO:');
+console.log('  HIST_fetch: busca TODOS docs do historico, extrai numero da classe');
+console.log('  Disciplinas: sem repeticao, de S.DISC[Xª Classe]');
+console.log('  Notas: match por nome exacto, case-insensitive, parcial');
+console.log('  Tabela: disciplina | notas por classe | media | extenso');
+
+})();
+</script>
+<!-- ================================================
+     FIM
+     ================================================ -->
 </body>
 </html>
