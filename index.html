@@ -29932,5 +29932,388 @@ console.log('  Documentos usam disciplinas da turma+curso');
 <!-- ================================================
      FIM
      ================================================ -->
+<!-- ================================================
+     II CICLO — CURSO EM TUDO
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// 1. FORMULÁRIO ALUNO — Campo curso no II Ciclo
+// =============================================
+var _oMdStud = S.mdStud;
+S.mdStud = function(ed){
+    _oMdStud.call(this, ed);
+
+    setTimeout(async function(){
+        var clEl = document.getElementById('st_classe');
+        if(!clEl) return;
+        var form = document.querySelector('#mBd form');
+        if(!form) return;
+        if(form.innerHTML.indexOf('st_curso') >= 0) return;
+
+        var d = ed || {};
+
+        // Buscar cursos disponíveis
+        var cursosOpts = '<option value="">--</option>';
+        if(S.CURSOS_II_CICLO){
+            for(var i=0;i<S.CURSOS_II_CICLO.length;i++){
+                cursosOpts += '<option value="'+S.CURSOS_II_CICLO[i]+'" '+(d.curso===S.CURSOS_II_CICLO[i]?'selected':'')+'>'+S.CURSOS_II_CICLO[i]+'</option>';
+            }
+        }
+        if(S._customCursos){
+            for(var j=0;j<S._customCursos.length;j++){
+                if(!S.CURSOS_II_CICLO||S.CURSOS_II_CICLO.indexOf(S._customCursos[j])<0){
+                    cursosOpts += '<option value="'+S._customCursos[j]+'" '+(d.curso===S._customCursos[j]?'selected':'')+'>'+S._customCursos[j]+'</option>';
+                }
+            }
+        }
+
+        // Inserir após turno
+        var turnoEl = document.getElementById('st_turno');
+        if(!turnoEl) return;
+        var turnoFg = turnoEl.closest('.fg');
+        if(!turnoFg) return;
+
+        var cursoHTML = '<div class="fg" id="stCursoDiv">'
+            + '<label class="fl">Curso (II Ciclo)</label>'
+            + '<select id="st_curso" class="fs">' + cursosOpts + '</select>'
+            + '</div>';
+
+        turnoFg.insertAdjacentHTML('afterend', cursoHTML);
+
+        // Mostrar/esconder baseado na classe
+        var checkCurso = function(){
+            var div = document.getElementById('stCursoDiv');
+            if(!div) return;
+            var n = parseInt(clEl.value);
+            div.style.display = (n >= 10) ? '' : 'none';
+        };
+
+        clEl.addEventListener('change', checkCurso);
+        checkCurso();
+
+    }, 400);
+};
+
+// Guardar curso no aluno
+var _oSaveStud = S.saveStud;
+S.saveStud = async function(eid){
+    // Adicionar curso aos dados antes de guardar
+    var cursoEl = document.getElementById('st_curso');
+    
+    await _oSaveStud.call(this, eid);
+
+    // Actualizar campo curso
+    if(cursoEl && cursoEl.value){
+        var tid = S.tid();
+        var col = await S._c('students');
+        if(eid){
+            try { await db.collection('schools').doc(tid).collection(col).doc(eid).update({curso: cursoEl.value}); } catch(e){}
+        }
+    }
+};
+
+// =============================================
+// 2. LISTA ESTUDANTES — Mostrar curso
+// =============================================
+S._routes['students'] = async function(){
+    var pc = document.getElementById('pgC'); var tid = S.tid(); if(!tid) return;
+    var yr = await S._yr(); var col = await S._c('students');
+    var cls2 = S.school ? S.clsFor(S.school.type) : S.allCls();
+    var hasII = cls2.some(function(c){ return parseInt(c) >= 10; });
+
+    pc.innerHTML = '<div class="fade"><div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Estudantes'+(yr?' — '+yr:'')+'</h2></div>'
+        + '<div style="display:flex;gap:5px;flex-wrap:wrap"><button class="btn btn-o btn-s" onclick="S._dlStudentsFullXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">download</span>XLSX</button>'
+        + '<button class="btn btn-r" onclick="S.mdStud()"><span class="material-icons-outlined">person_add</span>Novo</button></div></div>'
+        + '<div id="stSt" class="g4 mb-l"></div>'
+        + '<div class="cd p0" style="overflow:hidden"><div style="padding:10px;border-bottom:1px solid #E5E7EB"><input type="text" class="fi" placeholder="Pesquisar..." oninput="S.filterTbl(\'stTb\',this.value)"></div>'
+        + '<div class="ovx"><table class="tbl"><thead><tr><th>N.</th><th>Estudante</th><th>Classe</th><th>Turma</th>'
+        + (hasII ? '<th>Curso</th>' : '')
+        + '<th>Sexo</th><th>Estado</th><th class="tc">Accoes</th></tr></thead>'
+        + '<tbody id="stTb"><tr><td colspan="'+(hasII?8:7)+'" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div></div></div>';
+
+    var unsub = db.collection('schools').doc(tid).collection(col).onSnapshot(function(snap){
+        var tb = document.getElementById('stTb'); var stE = document.getElementById('stSt'); if(!tb) return;
+        if(snap.empty){ tb.innerHTML = '<tr><td colspan="'+(hasII?8:7)+'" class="tc tm" style="padding:40px">Sem alunos</td></tr>'; return; }
+        var r3 = []; snap.forEach(function(d2){ var s = d2.data(); s.id = d2.id; r3.push(s); });
+        r3.sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+        var h='',n=0,tot=0,mc=0,fm=0;
+        for(var i=0;i<r3.length;i++){
+            var s=r3[i];n++;tot++;if(s.sex==='Masculino')mc++;else fm++;
+            var st=S.gSt(s.status||'Activo',s.sex);
+            var sc2={'Activo':'bg-ok','Aprovado':'bg-ok','Aprovada':'bg-ok','Reprovado':'bg-er','Reprovada':'bg-er','Transferido':'bg-wr','Transferida':'bg-wr','Desistente':'bg-er'};
+            h+='<tr><td>'+n+'</td><td class="fw7 fs-s">'+(s.name||'')+'</td><td class="fw7">'+(s.classe||'')+'</td><td><span class="bg bg-in">'+(s.turma||'')+'</span></td>';
+            if(hasII) h+='<td class="fs-s">'+(s.curso||'--')+'</td>';
+            h+='<td>'+(s.sex==='Feminino'?'F':'M')+'</td><td><span class="bg '+(sc2[st]||'bg-in')+'">'+st+'</span></td>'
+            +'<td><div style="display:flex;gap:2px;justify-content:center">'
+            +'<button class="btn btn-gh btn-s" onclick="S.viewStud(\''+s.id+'\')"><span class="material-icons-outlined" style="font-size:.8rem">visibility</span></button>'
+            +'<button class="btn btn-gh btn-s" onclick="S.editStud(\''+s.id+'\')"><span class="material-icons-outlined" style="font-size:.8rem">edit</span></button>'
+            +'<button class="btn btn-gh btn-s" onclick="S._printStudFicha(\''+s.id+'\')"><span class="material-icons-outlined" style="font-size:.8rem;color:#D4A017">picture_as_pdf</span></button>'
+            +'</div></td></tr>';
+        }
+        tb.innerHTML=h;
+        if(stE)stE.innerHTML='<div class="stc"><div class="st-ic" style="background:rgba(204,27,43,.08);color:#CC1B2B"><span class="material-icons-outlined">people</span></div><div><div class="st-v">'+tot+'</div><div class="st-l">Total</div></div></div>'
+            +'<div class="stc"><div class="st-ic" style="background:rgba(59,130,246,.08);color:#3B82F6"><span class="material-icons-outlined">man</span></div><div><div class="st-v">'+mc+'</div><div class="st-l">M</div></div></div>'
+            +'<div class="stc"><div class="st-ic" style="background:rgba(236,72,153,.08);color:#EC4899"><span class="material-icons-outlined">woman</span></div><div><div class="st-v">'+fm+'</div><div class="st-l">F</div></div></div>';
+    });
+    S._ls.push(unsub);
+};
+
+// =============================================
+// 3. NOTAS — Dropdown curso no II Ciclo
+// =============================================
+var _oGrDir = S._pgGradesDirector;
+if(typeof _oGrDir === 'function'){
+    S._pgGradesDirector = function(){
+        _oGrDir.call(this);
+
+        setTimeout(function(){
+            var clEl = document.getElementById('gd_cl');
+            if(!clEl) return;
+
+            // Adicionar dropdown curso após turma
+            var tmEl = document.getElementById('gd_tm');
+            if(!tmEl) return;
+            var tmFg = tmEl.closest('.fg');
+            if(!tmFg || document.getElementById('gd_curso')) return;
+
+            var cursoHTML = '<div class="fg" id="gdCursoDiv" style="display:none">'
+                + '<label class="fl">Curso</label>'
+                + '<select id="gd_curso" class="fs" onchange="S._gdCursoChanged()"><option value="">--</option></select>'
+                + '</div>';
+
+            tmFg.insertAdjacentHTML('afterend', cursoHTML);
+
+            clEl.addEventListener('change', function(){
+                var n = parseInt(clEl.value);
+                var div = document.getElementById('gdCursoDiv');
+                if(div) div.style.display = (n >= 10) ? '' : 'none';
+                if(n >= 10) S._gdLoadCursos();
+            });
+        }, 500);
+    };
+}
+
+S._gdLoadCursos = async function(){
+    var cursoSel = document.getElementById('gd_curso');
+    if(!cursoSel) return;
+    cursoSel.innerHTML = '<option value="">--</option>';
+
+    var tid = S.tid();
+    var col = await S._c('turmas');
+    var cl = (document.getElementById('gd_cl')||{}).value;
+    if(!cl) return;
+
+    try {
+        var snap = await db.collection('schools').doc(tid).collection(col).get();
+        var cursos = {};
+        snap.forEach(function(d2){
+            var t = d2.data();
+            if(t.classe === cl && t.curso) cursos[t.curso] = true;
+        });
+        for(var c in cursos) cursoSel.innerHTML += '<option value="'+c+'">'+c+'</option>';
+    } catch(e){}
+};
+
+S._gdCursoChanged = async function(){
+    var cl = (document.getElementById('gd_cl')||{}).value;
+    var tm = (document.getElementById('gd_tm')||{}).value;
+    var curso = (document.getElementById('gd_curso')||{}).value;
+
+    if(cl && tm && parseInt(cl) >= 10){
+        var tid = S.tid();
+        var info = await S._getTurmaDiscs(tid, cl, tm);
+        if(info.discs.length > 0){
+            S.DISC[cl] = info.discs;
+            // Actualizar dropdown disciplinas
+            if(typeof S._grLdDsc === 'function') S._grLdDsc();
+            if(typeof S._grUpdateDiscs === 'function') S._grUpdateDiscs();
+            var dcEl = document.getElementById('gr_disc') || document.getElementById('gd_dc');
+            if(dcEl) dcEl.innerHTML = S.discOpts(cl);
+        }
+    }
+};
+
+// =============================================
+// 4. PRESENÇAS — Dropdown curso
+// =============================================
+var _oAttDir = S._pgAttendanceDirectorFull;
+if(typeof _oAttDir === 'function'){
+    S._pgAttendanceDirectorFull = function(){
+        _oAttDir.call(this);
+
+        setTimeout(function(){
+            var clEl = document.getElementById('at_cl');
+            if(!clEl) return;
+            var tmEl = document.getElementById('at_tm');
+            if(!tmEl) return;
+            var tmFg = tmEl.closest('.fg');
+            if(!tmFg || document.getElementById('at_curso')) return;
+
+            clEl.addEventListener('change', function(){
+                var n = parseInt(clEl.value);
+                var div = document.getElementById('atCursoDiv');
+                if(div) div.style.display = (n >= 10) ? '' : 'none';
+            });
+        }, 500);
+    };
+}
+
+// =============================================
+// 5. DOCUMENTOS — Incluir curso do aluno
+// =============================================
+
+// Buscar curso do aluno (do seu registo)
+S._getStudentCurso = async function(studentId, classe, turma){
+    var n = parseInt(classe);
+    if(n < 10) return '';
+    var tid = S.tid();
+    if(!tid) return '';
+
+    // 1. Buscar do registo do aluno
+    if(studentId){
+        var col = await S._c('students');
+        try {
+            var sDoc = await db.collection('schools').doc(tid).collection(col).doc(studentId).get();
+            if(sDoc.exists && sDoc.data().curso) return sDoc.data().curso;
+        } catch(e){}
+    }
+
+    // 2. Buscar da turma
+    var tcol = await S._c('turmas');
+    try {
+        var snap = await db.collection('schools').doc(tid).collection(tcol).get();
+        var curso = '';
+        snap.forEach(function(d2){
+            var t = d2.data();
+            if(t.classe === classe && t.turma === turma && t.curso) curso = t.curso;
+        });
+        if(curso) return curso;
+    } catch(e){}
+
+    // 3. Fallback turmas base
+    try {
+        var snap2 = await db.collection('schools').doc(tid).collection('turmas').get();
+        snap2.forEach(function(d2){
+            var t = d2.data();
+            if(t.classe === classe && t.turma === turma && t.curso) curso = t.curso;
+        });
+        return curso || '';
+    } catch(e){ return ''; }
+};
+
+// =============================================
+// 6. VISTA DO ALUNO — Mostrar curso
+// =============================================
+var _oViewStud = S.viewStud;
+S.viewStud = async function(id){
+    await _oViewStud.call(this, id);
+
+    setTimeout(async function(){
+        var mBd = document.getElementById('mBd');
+        if(!mBd) return;
+
+        var tid = S.tid();
+        var col = await S._c('students');
+        try {
+            var sDoc = await db.collection('schools').doc(tid).collection(col).doc(id).get();
+            if(!sDoc.exists) return;
+            var s = sDoc.data();
+            if(parseInt(s.classe) >= 10 && s.curso){
+                // Adicionar curso à vista
+                var classeText = mBd.querySelector('p');
+                if(classeText && classeText.textContent.indexOf('Curso') < 0){
+                    var cursoSpan = document.createElement('span');
+                    cursoSpan.className = 'bg bg-in';
+                    cursoSpan.style.cssText = 'margin-left:4px;font-size:.62rem';
+                    cursoSpan.textContent = s.curso;
+                    classeText.appendChild(cursoSpan);
+                }
+            }
+        } catch(e){}
+    }, 400);
+};
+
+// =============================================
+// 7. FICHA PDF — Incluir curso
+// =============================================
+var _oPrintStud = S._printStudFicha;
+S._printStudFicha = async function(studentId){
+    var tid = S.tid();
+    var col = await S._c('students');
+
+    try {
+        var sDoc = await db.collection('schools').doc(tid).collection(col).doc(studentId).get();
+        if(!sDoc.exists) return S.toast('Nao encontrado','error');
+        var s = sDoc.data();
+
+        // Se II Ciclo, buscar curso
+        if(parseInt(s.classe) >= 10 && !s.curso){
+            s.curso = await S._getStudentCurso(studentId, s.classe, s.turma);
+        }
+
+        // Chamar função original com dados actualizados
+        // Temporariamente guardar o curso no doc
+        if(s.curso){
+            await db.collection('schools').doc(tid).collection(col).doc(studentId).update({curso: s.curso});
+        }
+    } catch(e){}
+
+    await _oPrintStud.call(this, studentId);
+};
+
+// =============================================
+// 8. XLSX ALUNOS — Incluir curso
+// =============================================
+var _oDlStudXLSX = S._dlStudentsFullXLSX;
+S._dlStudentsFullXLSX = async function(){
+    var tid = S.tid();
+    if(!tid) return S.toast('Escola','error');
+    var col = await S._c('students');
+    S.toast('Preparando...','info',3000);
+
+    try {
+        var snap = await db.collection('schools').doc(tid).collection(col).get();
+        if(snap.empty) return S.toast('Sem alunos','warn');
+
+        var data = []; var n = 0;
+        snap.forEach(function(d2){
+            n++; var s = d2.data();
+            var row = {
+                'N.': n, 'Nome': s.name||'', 'Sexo': s.sex||'',
+                'Nascimento': s.dob||'', 'BI': s.bi||'',
+                'Processo': s.process||'', 'Matricula': s.matricula||'',
+                'Classe': s.classe||'', 'Turma': s.turma||'',
+                'Curso': s.curso||'', 'Turno': s.turno||'',
+                'Estado': s.status||'', 'Financeiro': s.financialStatus||'',
+                'Pai': s.fatherName||'', 'Mae': s.motherName||'',
+                'Encarregado': s.guardian||'', 'Tel.Enc.': s.guardianPhone||''
+            };
+            data.push(row);
+        });
+
+        data.sort(function(a,b){ return (a.Nome||'').localeCompare(b.Nome||''); });
+        var ws = XLSX.utils.json_to_sheet(data);
+        var wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Estudantes');
+        XLSX.writeFile(wb, 'Alunos.xlsx');
+        S.toast(n + ' alunos exportados!', 'success');
+    } catch(e){ S.toast(e.message, 'error'); }
+};
+
+console.log('II CICLO — Curso integrado em tudo:');
+console.log('  Formulario aluno: campo curso');
+console.log('  Lista alunos: coluna curso');
+console.log('  Notas: dropdown curso');
+console.log('  Documentos: curso do aluno');
+console.log('  Ficha PDF: com curso');
+console.log('  XLSX: com curso');
+
+})();
+</script>
+<!-- ================================================
+     FIM
+     ================================================ -->
 </body>
 </html>
