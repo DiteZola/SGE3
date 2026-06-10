@@ -29567,5 +29567,370 @@ console.log('  Ordem reflete nos documentos');
 <!-- ================================================
      FIM
      ================================================ -->
+<!-- ================================================
+     II CICLO — DISCIPLINAS POR CURSO
+     ================================================ -->
+<!-- ================================================
+     II CICLO COMPLETO
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// GUARDAR DISCIPLINAS POR TURMA+CURSO
+// Firestore: schools/{tid}/turmaDiscs/{turmaId}
+// =============================================
+
+// Buscar disciplinas de uma turma específica
+S._getTurmaDiscs = async function(tid, classe, turma){
+    var n = parseInt(classe);
+
+    // Primário e I Ciclo: disciplinas padrão
+    if(n < 10) return {discs: S.DISC[classe] || [], cats: {}};
+
+    // II Ciclo: buscar do Firestore
+    var col = await S._c('turmas');
+    var turmaDoc = null;
+    var curso = '';
+
+    try {
+        var snap = await db.collection('schools').doc(tid).collection(col).get();
+        snap.forEach(function(d2){
+            var t = d2.data();
+            if(t.classe === classe && t.turma === turma){
+                turmaDoc = {id: d2.id, data: t};
+                curso = t.curso || '';
+            }
+        });
+    } catch(e){}
+
+    // Buscar disciplinas personalizadas desta turma
+    if(turmaDoc){
+        try {
+            var discDoc = await db.collection('schools').doc(tid).collection('turmaDiscs').doc(turmaDoc.id).get();
+            if(discDoc.exists && discDoc.data().discs){
+                return {
+                    discs: discDoc.data().discs,
+                    cats: discDoc.data().cats || {},
+                    curso: curso
+                };
+            }
+        } catch(e){}
+    }
+
+    // Usar disciplinas do curso pré-definido
+    if(curso && S.DISC_CURSOS && S.DISC_CURSOS[curso]){
+        var cd = S.DISC_CURSOS[curso];
+        var allD = (cd.geral || []).concat(cd.especifica || []);
+        var cats = {};
+        for(var g = 0; g < (cd.geral||[]).length; g++) cats[cd.geral[g]] = 'geral';
+        for(var e2 = 0; e2 < (cd.especifica||[]).length; e2++) cats[cd.especifica[e2]] = 'especifica';
+        return {discs: allD, cats: cats, curso: curso};
+    }
+
+    // Fallback: disciplinas padrão da classe
+    return {discs: S.DISC[classe] || [], cats: {}, curso: curso};
+};
+
+// Guardar disciplinas de uma turma
+S._saveTurmaDiscs = async function(turmaId, discs, cats){
+    var tid = S.tid();
+    try {
+        await db.collection('schools').doc(tid).collection('turmaDiscs').doc(turmaId).set({
+            discs: discs,
+            cats: cats || {},
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        return true;
+    } catch(e){ return false; }
+};
+
+// =============================================
+// TURMAS II CICLO — Gerir disciplinas
+// =============================================
+S._routes['classes'] = async function(){
+    if(!S.hasRole('diretor','subdiretor_pedagogico','super_admin')) return S.pgAccessDenied();
+    var pc = document.getElementById('pgC');
+    var tid = S.tid(); if(!tid) return;
+    var yr = await S._yr();
+    var col = await S._c('turmas');
+    var cls2 = S.school ? S.clsFor(S.school.type) : S.allCls();
+
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Classes & Turmas' + (yr ? ' — ' + yr : '') + '</h2></div>'
+        + '<div style="display:flex;gap:5px">'
+        + '<button class="btn btn-o btn-s" onclick="S.expTurmasXLSX()"><span class="material-icons-outlined" style="font-size:.85rem">table_chart</span>XLSX</button>'
+        + '<button class="btn btn-r" onclick="S._mdTurmaNew()"><span class="material-icons-outlined">add</span>Nova Turma</button>'
+        + '</div></div>'
+        + '<div class="cd p0" style="overflow:hidden"><div style="padding:10px;border-bottom:1px solid #E5E7EB">'
+        + '<input type="text" class="fi" placeholder="Pesquisar..." oninput="S.filterTbl(\'tmTb5\',this.value)"></div>'
+        + '<div class="ovx"><table class="tbl"><thead><tr>'
+        + '<th>Classe</th><th>Turma</th><th>Curso</th><th>Turno</th><th>Sala</th><th>Cap.</th><th>Disc.</th><th class="tc">Accoes</th>'
+        + '</tr></thead><tbody id="tmTb5"><tr><td colspan="8" class="tc tm" style="padding:30px">Carregando...</td></tr></tbody></table></div></div></div>';
+
+    var unsub = db.collection('schools').doc(tid).collection(col).onSnapshot(async function(snap){
+        var tb = document.getElementById('tmTb5'); if(!tb) return;
+        if(snap.empty){ tb.innerHTML = '<tr><td colspan="8" class="tc tm" style="padding:40px">Sem turmas</td></tr>'; return; }
+
+        var rows = [];
+        snap.forEach(function(d2){ var t = d2.data(); t._id = d2.id; rows.push(t); });
+        rows.sort(function(a,b){ return (a.classe||'').localeCompare(b.classe||'') || (a.turma||'').localeCompare(b.turma||''); });
+
+        var h = '';
+        for(var i = 0; i < rows.length; i++){
+            var t = rows[i];
+            var isII = parseInt(t.classe) >= 10;
+
+            // Contar disciplinas
+            var discInfo = await S._getTurmaDiscs(tid, t.classe, t.turma);
+            var discCount = discInfo.discs.length;
+
+            h += '<tr>'
+                + '<td class="fw7">' + (t.classe||'') + '</td>'
+                + '<td><span class="bg bg-in">' + (t.turma||'') + '</span></td>'
+                + '<td class="fs-s">' + (t.curso||'--') + '</td>'
+                + '<td class="fs-s">' + (t.turno||'') + '</td>'
+                + '<td class="fs-s">' + (t.sala||'--') + '</td>'
+                + '<td class="tc">' + (t.capacidade||45) + '</td>'
+                + '<td class="tc"><span class="bg ' + (discCount>0?'bg-ok':'bg-wr') + '">' + discCount + '</span></td>'
+                + '<td><div style="display:flex;gap:2px;justify-content:center">'
+                + '<button class="btn btn-gh btn-s" onclick="S._editTm5(\'' + t._id + '\')" title="Editar"><span class="material-icons-outlined" style="font-size:.8rem">edit</span></button>';
+
+            if(isII){
+                h += '<button class="btn btn-gh btn-s" onclick="S._mdTurmaDiscs(\'' + t._id + '\',\'' + (t.classe||'') + '\',\'' + (t.turma||'') + '\',\'' + (t.curso||'') + '\')" title="Disciplinas"><span class="material-icons-outlined" style="font-size:.8rem;color:#D4A017">menu_book</span></button>';
+            }
+
+            h += '<button class="btn btn-gh btn-s" onclick="S._delTm5(\'' + t._id + '\')"><span class="material-icons-outlined" style="font-size:.8rem;color:#DC2626">delete</span></button>'
+                + '</div></td></tr>';
+        }
+        tb.innerHTML = h;
+    });
+    S._ls.push(unsub);
+};
+
+S._editTm5 = async function(id){
+    var tid = S.tid(); var col = await S._c('turmas');
+    try { var d = await db.collection('schools').doc(tid).collection(col).doc(id).get();
+    if(d.exists) S._mdTurmaNew({_id:id,...d.data()}); } catch(e){ S.toast(e.message,'error'); }
+};
+
+S._delTm5 = async function(id){
+    if(!confirm('Eliminar?')) return;
+    var tid = S.tid(); var col = await S._c('turmas');
+    try { await db.collection('schools').doc(tid).collection(col).doc(id).delete(); S.toast('Eliminada','success'); } catch(e){ S.toast(e.message,'error'); }
+};
+
+// =============================================
+// MODAL: DISCIPLINAS DE UMA TURMA (II Ciclo)
+// =============================================
+S._mdTurmaDiscs = async function(turmaId, classe, turma, curso){
+    var tid = S.tid();
+    var discInfo = await S._getTurmaDiscs(tid, classe, turma);
+    var discs = discInfo.discs;
+    var cats = discInfo.cats;
+
+    // Separar
+    var gerais = [], especificas = [];
+    for(var i = 0; i < discs.length; i++){
+        if((cats[discs[i]]||'geral') === 'especifica') especificas.push(discs[i]);
+        else gerais.push(discs[i]);
+    }
+
+    // Guardar referências
+    S._editingTurmaDiscs = {turmaId: turmaId, classe: classe, turma: turma, curso: curso, discs: discs, cats: cats};
+
+    var h = '<div style="max-height:60vh;overflow-y:auto">'
+        + '<div class="cd mb-m" style="padding:8px;background:rgba(37,99,235,.04)">'
+        + '<p class="fs-s"><strong>' + classe + '</strong> — Turma <strong>' + turma + '</strong>'
+        + (curso ? ' — Curso: <strong>' + curso + '</strong>' : '') + '</p></div>';
+
+    // Formação Geral
+    h += '<h4 class="fw7 fs-s mb-s" style="color:#2563EB">Formacao Geral (' + gerais.length + ')</h4>'
+        + '<div id="tdGerais">';
+    for(var g = 0; g < gerais.length; g++){
+        h += S._discItemHTML(gerais[g], g, 'geral', gerais.length);
+    }
+    h += '</div>';
+
+    // Formação Específica
+    h += '<h4 class="fw7 fs-s mb-s mt-m" style="color:#059669">Formacao Especifica (' + especificas.length + ')</h4>'
+        + '<div id="tdEspec">';
+    for(var e2 = 0; e2 < especificas.length; e2++){
+        h += S._discItemHTML(especificas[e2], e2, 'especifica', especificas.length);
+    }
+    h += '</div>';
+
+    // Adicionar nova
+    h += '<div class="g2 mt-m">'
+        + '<div class="fg"><input type="text" id="tdNewDisc" class="fi" placeholder="Nova disciplina..."></div>'
+        + '<div class="fg"><select id="tdNewCat" class="fs"><option value="geral">Geral</option><option value="especifica">Especifica</option></select></div>'
+        + '</div>'
+        + '<button class="btn btn-r btn-s" onclick="S._tdAddDisc()"><span class="material-icons-outlined" style="font-size:.8rem">add</span>Adicionar</button>'
+        + '</div>';
+
+    S.oModal('Disciplinas — ' + classe + ' ' + turma, h,
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-gn" onclick="S._tdSave()"><span class="material-icons-outlined">save</span>Guardar</button>', '550px');
+};
+
+S._discItemHTML = function(disc, idx, cat, total){
+    return '<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(0,0,0,.04)" data-disc="' + disc + '" data-cat="' + cat + '">'
+        + '<span class="fw7 fs-s" style="flex:1">' + disc + '</span>'
+        + '<button class="btn btn-gh btn-s" onclick="S._tdMove(\'' + disc.replace(/'/g,"\\'") + '\',-1)"><span class="material-icons-outlined" style="font-size:.7rem">arrow_upward</span></button>'
+        + '<button class="btn btn-gh btn-s" onclick="S._tdMove(\'' + disc.replace(/'/g,"\\'") + '\',1)"><span class="material-icons-outlined" style="font-size:.7rem">arrow_downward</span></button>'
+        + '<button class="btn btn-gh btn-s" onclick="S._tdChangeCat(\'' + disc.replace(/'/g,"\\'") + '\')"><span class="material-icons-outlined" style="font-size:.7rem;color:#D4A017">swap_horiz</span></button>'
+        + '<button class="btn btn-gh btn-s" onclick="S._tdRemove(\'' + disc.replace(/'/g,"\\'") + '\')"><span class="material-icons-outlined" style="font-size:.7rem;color:#DC2626">close</span></button>'
+        + '</div>';
+};
+
+S._tdMove = function(disc, dir){
+    var d = S._editingTurmaDiscs;
+    var idx = d.discs.indexOf(disc);
+    if(idx < 0) return;
+    var ni = idx + dir;
+    if(ni < 0 || ni >= d.discs.length) return;
+    var temp = d.discs[idx]; d.discs[idx] = d.discs[ni]; d.discs[ni] = temp;
+    S._mdTurmaDiscs(d.turmaId, d.classe, d.turma, d.curso);
+};
+
+S._tdChangeCat = function(disc){
+    var d = S._editingTurmaDiscs;
+    var current = d.cats[disc] || 'geral';
+    d.cats[disc] = current === 'geral' ? 'especifica' : 'geral';
+    S._mdTurmaDiscs(d.turmaId, d.classe, d.turma, d.curso);
+};
+
+S._tdRemove = function(disc){
+    var d = S._editingTurmaDiscs;
+    d.discs = d.discs.filter(function(x){ return x !== disc; });
+    delete d.cats[disc];
+    S._mdTurmaDiscs(d.turmaId, d.classe, d.turma, d.curso);
+};
+
+S._tdAddDisc = function(){
+    var nm = (document.getElementById('tdNewDisc')||{}).value;
+    var cat = (document.getElementById('tdNewCat')||{}).value || 'geral';
+    if(!nm || !nm.trim()) return S.toast('Nome','error');
+    nm = nm.trim();
+
+    var d = S._editingTurmaDiscs;
+    if(d.discs.indexOf(nm) >= 0) return S.toast('Ja existe','warn');
+
+    d.discs.push(nm);
+    d.cats[nm] = cat;
+    S._mdTurmaDiscs(d.turmaId, d.classe, d.turma, d.curso);
+};
+
+S._tdSave = async function(){
+    var d = S._editingTurmaDiscs;
+    if(!d) return;
+
+    var ok = await S._saveTurmaDiscs(d.turmaId, d.discs, d.cats);
+    if(ok) S.toast('Disciplinas guardadas!','success');
+    else S.toast('Erro ao guardar','error');
+    S.cModal();
+};
+
+// =============================================
+// DOCUMENTOS — Usar disciplinas da turma+curso
+// =============================================
+var _oCertBuild = S.CERT_buildPDF;
+S.CERT_buildPDF = async function(students, esc, certNum, yrVal){
+    // Para II Ciclo, garantir que DISC usa disciplinas do curso
+    for(var i = 0; i < students.length; i++){
+        var s = students[i];
+        var n = parseInt(s.classe);
+        if(n >= 10 && s.turma){
+            var tid = S.tid();
+            var info = await S._getTurmaDiscs(tid, s.classe, s.turma);
+            if(info.discs.length > 0){
+                // Actualizar para todas as classes do certificado
+                var certClasses = [];
+                if(certNum <= 12) certClasses = ['10ª Classe','11ª Classe','12ª Classe'];
+                else certClasses = ['10ª Classe','11ª Classe','12ª Classe','13ª Classe'];
+
+                for(var ci = 0; ci < certClasses.length; ci++){
+                    S.DISC[certClasses[ci]] = info.discs;
+                    if(!S._discCategories) S._discCategories = {};
+                    S._discCategories[certClasses[ci]] = info.cats;
+                }
+            }
+        }
+    }
+    await _oCertBuild.call(this, students, esc, certNum, yrVal);
+};
+
+// Declaração
+var _oDeclBuild = S._genDeclaracoesLote;
+if(typeof _oDeclBuild === 'function'){
+    S._genDeclaracoesLote = async function(students, esc){
+        for(var i = 0; i < students.length; i++){
+            var s = students[i];
+            var n = parseInt(s.classe);
+            if(n >= 10 && s.turma){
+                var tid = S.tid();
+                var info = await S._getTurmaDiscs(tid, s.classe, s.turma);
+                if(info.discs.length > 0){
+                    S.DISC[s.classe] = info.discs;
+                }
+            }
+        }
+        await _oDeclBuild.call(this, students, esc);
+    };
+}
+
+// Pauta
+var _oGrLoad = S._gdLoadPauta;
+if(typeof _oGrLoad === 'function'){
+    S._gdLoadPauta = async function(){
+        var cl = (document.getElementById('gd_cl')||{}).value;
+        var tm = (document.getElementById('gd_tm')||{}).value;
+        if(cl && tm && parseInt(cl) >= 10){
+            var tid = S.tid();
+            var info = await S._getTurmaDiscs(tid, cl, tm);
+            if(info.discs.length > 0) S.DISC[cl] = info.discs;
+        }
+        if(typeof _oGrLoad === 'function') await _oGrLoad.call(this);
+    };
+}
+
+// =============================================
+// DOCUMENTOS — Modal com classe+turma+curso
+// =============================================
+S._emitDoc = async function(type, studentId){
+    var tid = S.tid();
+    var sDoc = await db.collection('schools').doc(tid).collection(await S._c('students')).doc(studentId).get();
+    if(!sDoc.exists){ S.toast('Nao encontrado','error'); return; }
+    var s = sDoc.data(); s._id = studentId; s.id = studentId;
+
+    if(type === 'certificado'){
+        S.CERT_openModal(studentId);
+    } else if(type === 'declaracao'){
+        if(typeof S._mdDeclOptions === 'function') S._mdDeclOptions(studentId);
+        else {
+            var esc = S.school || {};
+            await S._genDeclaracoesLote([s], esc);
+        }
+    } else if(type === 'boletim'){
+        var esc2 = S.school || {};
+        await S._genBoletimPDF(studentId, s, esc2);
+    } else if(type === 'passe'){
+        var esc3 = S.school || {};
+        await S._genPassesLote([s], esc3);
+    }
+};
+
+console.log('II CICLO COMPLETO:');
+console.log('  Cada turma tem suas disciplinas proprias');
+console.log('  Gerir disciplinas por turma (botao na lista)');
+console.log('  Formacao Geral + Especifica');
+console.log('  Ordenar, adicionar, remover, mudar categoria');
+console.log('  Documentos usam disciplinas da turma+curso');
+
+})();
+</script>
+<!-- ================================================
+     FIM
+     ================================================ -->
 </body>
 </html>
