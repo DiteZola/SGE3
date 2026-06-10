@@ -28081,5 +28081,401 @@ console.log('  Tabela: disciplina | notas por classe | media | extenso');
 <!-- ================================================
      FIM
      ================================================ -->
+<!-- ================================================
+     ANO LECTIVO + REMATRÍCULA + ESTADO FUNCIONÁRIO
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// 1. ESTADO DO FUNCIONÁRIO — Adicionar opções
+// =============================================
+var origMdStaff = S.mdStaff;
+S.mdStaff = function(ed){
+    origMdStaff.call(this, ed);
+
+    setTimeout(function(){
+        // Adicionar campo Estado Funcional se não existir
+        var form = document.querySelector('#mBd form');
+        if(!form) return;
+        if(form.innerHTML.indexOf('sf_estado') >= 0) return;
+
+        var d = ed || {};
+        var obsDiv = form.querySelector('#sf_obs');
+        if(!obsDiv) return;
+        var fgObs = obsDiv.closest('.fg');
+        if(!fgObs) return;
+
+        var stateHTML = '<div class="fg"><label class="fl">Estado Funcional</label>'
+            + '<select id="sf_estado" class="fs">'
+            + '<option ' + (!d.staffStatus || d.staffStatus==='Activo' ? 'selected' : '') + '>Activo</option>'
+            + '<option ' + (d.staffStatus==='Transferido' ? 'selected' : '') + '>Transferido</option>'
+            + '<option ' + (d.staffStatus==='Aposentado' ? 'selected' : '') + '>Aposentado</option>'
+            + '<option ' + (d.staffStatus==='Falecido' ? 'selected' : '') + '>Falecido</option>'
+            + '<option ' + (d.staffStatus==='Suspenso' ? 'selected' : '') + '>Suspenso</option>'
+            + '<option ' + (d.staffStatus==='Licenca' ? 'selected' : '') + '>Licenca</option>'
+            + '<option ' + (d.staffStatus==='Demitido' ? 'selected' : '') + '>Demitido</option>'
+            + '</select></div>'
+            + '<div class="fg"><label class="fl">Data Saida (se aplicavel)</label>'
+            + '<input type="date" id="sf_exitDate" class="fi" value="' + (d.exitDate || '') + '"></div>'
+            + '<div class="fg gc2"><label class="fl">Motivo da Saida</label>'
+            + '<input type="text" id="sf_exitReason" class="fi" value="' + (d.exitReason || '') + '"></div>';
+
+        fgObs.insertAdjacentHTML('beforebegin', stateHTML);
+    }, 400);
+};
+
+// Guardar estado funcional
+var origSaveStaff = S.saveStaff;
+S.saveStaff = async function(editId){
+    await origSaveStaff.call(this, editId);
+
+    // Actualizar campos extras
+    if(editId){
+        var tid = S.tid();
+        var estadoEl = document.getElementById('sf_estado');
+        var exitDateEl = document.getElementById('sf_exitDate');
+        var exitReasonEl = document.getElementById('sf_exitReason');
+
+        if(estadoEl){
+            try {
+                var extra = {
+                    staffStatus: estadoEl.value || 'Activo',
+                    exitDate: exitDateEl ? exitDateEl.value : '',
+                    exitReason: exitReasonEl ? exitReasonEl.value.trim() : '',
+                    active: estadoEl.value === 'Activo'
+                };
+                await db.collection('schools').doc(tid).collection('staff').doc(editId).update(extra);
+            } catch(e){}
+        }
+    }
+};
+
+// =============================================
+// 2. LISTA FUNCIONÁRIOS — Mostrar estado
+// =============================================
+var origStaffRoute = S._routes['staff'];
+S._routes['staff'] = function(){
+    if(typeof origStaffRoute === 'function') origStaffRoute.call(S);
+
+    // Após carregar, actualizar badges de estado
+    setTimeout(function(){
+        var tb = document.getElementById('sfTb');
+        if(!tb) return;
+        // O listener do Firestore já gere isto
+    }, 500);
+};
+
+// =============================================
+// 3. REMATRÍCULA POR ANO LECTIVO
+// =============================================
+var origRemat = S._routes['rematriculas'];
+S._routes['rematriculas'] = function(){
+    var pc = document.getElementById('pgC');
+
+    pc.innerHTML = '<div class="fade">'
+        + '<div class="fb fw gm mb-l"><div><h2 class="fw8 fs-l">Rematricula</h2>'
+        + '<p class="tm fs-s">Rematricular alunos para o novo ano lectivo</p></div></div>'
+
+        // Opções
+        + '<div class="cd mb-l">'
+        + '<h3 class="fw7 fs-m mb-m">Opcoes de Rematricula</h3>'
+        + '<div class="g2">'
+
+        // Individual
+        + '<div class="cd" style="padding:16px;cursor:pointer;border-left:3px solid #D4A017;transition:all .15s" '
+        + 'onclick="S._remat_individual()" onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'">'
+        + '<span class="material-icons-outlined" style="font-size:2rem;color:#D4A017">person_search</span>'
+        + '<h3 class="fw7 mt-s">Individual</h3>'
+        + '<p class="tm fs-s mt-s">Pesquisar e rematricular um aluno</p>'
+        + '</div>'
+
+        // Em lote
+        + '<div class="cd" style="padding:16px;cursor:pointer;border-left:3px solid #059669;transition:all .15s" '
+        + 'onclick="S._remat_lote()" onmouseover="this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.transform=\'\'">'
+        + '<span class="material-icons-outlined" style="font-size:2rem;color:#059669">groups</span>'
+        + '<h3 class="fw7 mt-s">Em Lote (Turma/Classe)</h3>'
+        + '<p class="tm fs-s mt-s">Rematricular todos os aprovados de uma turma</p>'
+        + '</div>'
+
+        + '</div></div>'
+        + '<div id="rematArea"></div></div>';
+};
+
+// =============================================
+// REMATRÍCULA INDIVIDUAL
+// =============================================
+S._remat_individual = function(){
+    var area = document.getElementById('rematArea');
+    area.innerHTML = '<div class="cd">'
+        + '<h3 class="fw7 fs-m mb-m">Pesquisar Aluno</h3>'
+        + '<div class="fg"><div style="position:relative">'
+        + '<span class="material-icons-outlined" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);color:#9CA3AF;font-size:.95rem">search</span>'
+        + '<input type="text" id="rematQ" class="fi" placeholder="Nome, processo ou matricula..." oninput="S._remat_search(this.value)" style="padding-left:30px">'
+        + '</div></div>'
+        + '<div id="rematResults"></div></div>';
+};
+
+S._remat_search = async function(q){
+    var res = document.getElementById('rematResults');
+    if(!q || q.length < 2){ res.innerHTML = ''; return; }
+    var tid = S.tid();
+
+    try {
+        var snap = await db.collection('schools').doc(tid).collection('students').get();
+        var ql = q.toLowerCase();
+        var results = [];
+        snap.forEach(function(d2){
+            var s = d2.data();
+            if((s.name||'').toLowerCase().indexOf(ql) >= 0 || (s.process||'') === q || (s.matricula||'') === q){
+                results.push({id: d2.id, data: s});
+            }
+        });
+
+        if(results.length === 0){
+            res.innerHTML = '<p class="tm tc" style="padding:12px">Nenhum resultado</p>';
+            return;
+        }
+
+        var h = '';
+        for(var i = 0; i < results.length; i++){
+            var r = results[i];
+            var s = r.data;
+            var st = S.gSt(s.status || 'Activo', s.sex);
+            var isAprov = st.indexOf('Aprovad') >= 0;
+            var nextCl = isAprov ? S.getNextCl(s.classe) : s.classe;
+
+            h += '<div class="cd mb-s" style="padding:12px;border-left:3px solid '
+                + (isAprov ? '#059669' : st.indexOf('Reprovad') >= 0 ? '#DC2626' : '#F59E0B') + '">'
+                + '<div class="fb fw gm">'
+                + '<div><strong>' + (s.name||'') + '</strong><br>'
+                + '<span class="fs-s tm">' + (s.classe||'') + ' | Turma ' + (s.turma||'') + ' | ' + (s.process||'') + '</span><br>'
+                + '<span class="bg ' + (isAprov?'bg-ok':'bg-wr') + '">' + st + '</span>'
+                + ' <span class="fs-s tg fw7">-> ' + nextCl + '</span></div>'
+                + '<button class="btn btn-gn btn-s" onclick="S._remat_confirm(\'' + r.id + '\',\'' + nextCl + '\',\'' + S.san(s.name||'') + '\')">'
+                + '<span class="material-icons-outlined" style="font-size:.8rem">check</span>Rematricular</button>'
+                + '</div></div>';
+        }
+
+        res.innerHTML = h;
+    } catch(e){ res.innerHTML = '<p class="tr">' + e.message + '</p>'; }
+};
+
+S._remat_confirm = function(studentId, nextClasse, name){
+    S.oModal('Confirmar Rematricula',
+        '<p class="mb-m">Rematricular <strong>' + name + '</strong> na <strong class="tg">' + nextClasse + '</strong></p>'
+        + '<div class="fg"><label class="fl">Nova Turma *</label>'
+        + '<input type="text" id="remat_turma" class="fi" placeholder="A, B, C..." style="text-transform:uppercase" maxlength="5"></div>'
+        + '<div class="fg"><label class="fl">Turno</label>'
+        + '<select id="remat_turno" class="fs"><option>Manha</option><option>Tarde</option><option>Noite</option></select></div>',
+        '<button class="btn btn-o" onclick="S.cModal()">Cancelar</button>'
+        + '<button class="btn btn-gn" onclick="S._remat_execute(\'' + studentId + '\',\'' + nextClasse + '\',\'' + name + '\')">'
+        + '<span class="material-icons-outlined">check</span>Confirmar</button>', '420px');
+};
+
+S._remat_execute = async function(studentId, nextClasse, name){
+    var turmaEl = document.getElementById('remat_turma');
+    var turnoEl = document.getElementById('remat_turno');
+
+    if(!turmaEl || !turmaEl.value.trim()){
+        S.toast('Introduza a turma', 'error'); return;
+    }
+
+    var newTurma = turmaEl.value.trim().toUpperCase();
+    var newTurno = turnoEl ? turnoEl.value : '';
+    var tid = S.tid();
+
+    try {
+        await db.collection('schools').doc(tid).collection('students').doc(studentId).update({
+            classe: nextClasse,
+            turma: newTurma,
+            turno: newTurno,
+            status: 'Activo',
+            rematriculadoEm: new Date().toISOString(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        S.log('rematricula', name + ' rematriculado na ' + nextClasse + ' Turma ' + newTurma);
+        S.toast(name + ' rematriculado na ' + nextClasse + ' Turma ' + newTurma + '!', 'success');
+        S.cModal();
+
+        // Limpar pesquisa
+        var qEl = document.getElementById('rematQ');
+        if(qEl) qEl.value = '';
+        var resEl = document.getElementById('rematResults');
+        if(resEl) resEl.innerHTML = '<div class="cd tc" style="padding:20px;border-color:rgba(5,150,105,.2);background:rgba(5,150,105,.03)">'
+            + '<span class="material-icons-outlined" style="font-size:2rem;color:#059669">check_circle</span>'
+            + '<h3 class="fw7 mt-s">' + name + '</h3>'
+            + '<p class="tm mt-s">' + nextClasse + ' — Turma ' + newTurma + '</p></div>';
+
+    } catch(e){ S.toast('Erro: ' + e.message, 'error'); }
+};
+
+// =============================================
+// REMATRÍCULA EM LOTE
+// =============================================
+S._remat_lote = function(){
+    var classes = S.school ? S.clsFor(S.school.type) : S.allCls();
+    var area = document.getElementById('rematArea');
+
+    area.innerHTML = '<div class="cd">'
+        + '<h3 class="fw7 fs-m mb-m">Rematricula em Lote</h3>'
+        + '<div class="g3 mb-m">'
+        + '<div class="fg"><label class="fl">Classe Actual *</label>'
+        + '<select id="rlot_cl" class="fs" onchange="S._rlot_loadTurmas()">'
+        + '<option value="">--</option>'
+        + classes.map(function(c){ return '<option value="' + c + '">' + c + '</option>'; }).join('')
+        + '</select></div>'
+        + '<div class="fg"><label class="fl">Turma Actual *</label>'
+        + '<select id="rlot_tm" class="fs"><option value="">--</option></select></div>'
+        + '<div class="fg"><label class="fl">Nova Turma *</label>'
+        + '<input type="text" id="rlot_newTm" class="fi" placeholder="A, B, C..." style="text-transform:uppercase" maxlength="5"></div>'
+        + '</div>'
+        + '<button class="btn btn-gn" onclick="S._rlot_preview()"><span class="material-icons-outlined">visibility</span>Ver Alunos</button>'
+        + '<div id="rlot_preview" class="mt-m"></div></div>';
+};
+
+S._rlot_loadTurmas = async function(){
+    var cl = document.getElementById('rlot_cl');
+    var tm = document.getElementById('rlot_tm');
+    if(!cl || !tm) return;
+    tm.innerHTML = '<option value="">--</option>';
+    if(!cl.value) return;
+
+    var turmas = await S._getTurmasByClass(S.tid(), cl.value);
+    for(var i = 0; i < turmas.length; i++){
+        if(turmas[i].active !== false)
+            tm.innerHTML += '<option value="' + turmas[i].turma + '">' + turmas[i].turma + '</option>';
+    }
+    if(turmas.length === 0){
+        var studs = await S._getStudentsByClass(S.tid(), cl.value);
+        var u = {};
+        for(var j=0;j<studs.length;j++){
+            if(studs[j].turma && !u[studs[j].turma]){
+                u[studs[j].turma] = true;
+                tm.innerHTML += '<option value="'+studs[j].turma+'">'+studs[j].turma+'</option>';
+            }
+        }
+    }
+};
+
+S._rlot_preview = async function(){
+    var cl = document.getElementById('rlot_cl');
+    var tm = document.getElementById('rlot_tm');
+    var newTm = document.getElementById('rlot_newTm');
+    var prev = document.getElementById('rlot_preview');
+
+    if(!cl || !cl.value || !tm || !tm.value){
+        S.toast('Seleccione classe e turma', 'error'); return;
+    }
+    if(!newTm || !newTm.value.trim()){
+        S.toast('Introduza a nova turma', 'error'); return;
+    }
+
+    var tid = S.tid();
+    var students = await S._getStudentsByClassTurma(tid, cl.value, tm.value);
+
+    if(students.length === 0){
+        prev.innerHTML = '<p class="tm tc" style="padding:12px">Nenhum aluno</p>';
+        return;
+    }
+
+    var aprovados = [];
+    var reprovados = [];
+    var outros = [];
+
+    for(var i = 0; i < students.length; i++){
+        var s = students[i];
+        var st = S.gSt(s.status || 'Activo', s.sex);
+        if(st.indexOf('Aprovad') >= 0) aprovados.push(s);
+        else if(st.indexOf('Reprovad') >= 0) reprovados.push(s);
+        else outros.push(s);
+    }
+
+    var nextCl = S.getNextCl(cl.value);
+    var newTurma = newTm.value.trim().toUpperCase();
+
+    var h = '<div class="cd mt-m" style="border-left:3px solid #059669">'
+        + '<h3 class="fw7 fs-m mb-m">Resumo</h3>'
+        + '<div class="g3 mb-m">'
+        + '<div class="tc"><p class="fw8 fs-l" style="color:#059669">' + aprovados.length + '</p><p class="fs-s tm">Aprovados -> ' + nextCl + ' ' + newTurma + '</p></div>'
+        + '<div class="tc"><p class="fw8 fs-l" style="color:#DC2626">' + reprovados.length + '</p><p class="fs-s tm">Reprovados -> ' + cl.value + ' ' + newTurma + '</p></div>'
+        + '<div class="tc"><p class="fw8 fs-l" style="color:#F59E0B">' + outros.length + '</p><p class="fs-s tm">Outros (sem alteracao)</p></div>'
+        + '</div>';
+
+    // Lista
+    if(aprovados.length > 0){
+        h += '<p class="fw7 fs-s" style="color:#059669">Aprovados (sobem para ' + nextCl + '):</p><ul style="font-size:.82rem;margin:4px 0 8px 16px">';
+        for(var a = 0; a < aprovados.length; a++) h += '<li>' + aprovados[a].name + '</li>';
+        h += '</ul>';
+    }
+
+    if(reprovados.length > 0){
+        h += '<p class="fw7 fs-s" style="color:#DC2626">Reprovados (permanecem na ' + cl.value + '):</p><ul style="font-size:.82rem;margin:4px 0 8px 16px">';
+        for(var r = 0; r < reprovados.length; r++) h += '<li>' + reprovados[r].name + '</li>';
+        h += '</ul>';
+    }
+
+    h += '<button class="btn btn-gn mt-m" onclick="S._rlot_execute(\'' + cl.value + '\',\'' + tm.value + '\',\'' + newTurma + '\')">'
+        + '<span class="material-icons-outlined">check</span>Confirmar Rematricula em Lote (' + (aprovados.length + reprovados.length) + ' alunos)</button>'
+        + '</div>';
+
+    prev.innerHTML = h;
+};
+
+S._rlot_execute = async function(classe, turma, newTurma){
+    if(!confirm('Confirmar rematricula de todos os alunos?\n\nAprovados: sobem de classe\nReprovados: permanecem na mesma classe\nTodos recebem turma: ' + newTurma)) return;
+
+    var tid = S.tid();
+    var students = await S._getStudentsByClassTurma(tid, classe, turma);
+    var nextCl = S.getNextCl(classe);
+    var batch = db.batch();
+    var count = 0;
+
+    for(var i = 0; i < students.length; i++){
+        var s = students[i];
+        var st = S.gSt(s.status || 'Activo', s.sex);
+        var isAprov = st.indexOf('Aprovad') >= 0;
+        var isReprov = st.indexOf('Reprovad') >= 0;
+
+        if(!isAprov && !isReprov) continue;
+
+        var newClasse = isAprov ? nextCl : classe;
+        var ref = db.collection('schools').doc(tid).collection('students').doc(s.id);
+
+        batch.update(ref, {
+            classe: newClasse,
+            turma: newTurma,
+            status: 'Activo',
+            rematriculadoEm: new Date().toISOString(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+
+        count++;
+    }
+
+    if(count > 0){
+        try {
+            await batch.commit();
+            S.log('rematricula', count + ' alunos rematriculados em lote');
+            S.toast(count + ' alunos rematriculados!', 'success');
+            S.nav('rematriculas');
+        } catch(e){ S.toast('Erro: ' + e.message, 'error'); }
+    } else {
+        S.toast('Nenhum aluno para rematricular', 'warn');
+    }
+};
+
+console.log('Rematricula por ano lectivo + Estado funcionario carregados');
+console.log('  Rematricula individual: pesquisa + confirma turma');
+console.log('  Rematricula lote: classe/turma + preview + batch');
+console.log('  Aprovados sobem, reprovados permanecem');
+console.log('  Estado funcionario: Activo, Transferido, Aposentado, Falecido, Suspenso, Licenca, Demitido');
+
+})();
+</script>
+<!-- ================================================
+     FIM
+     ================================================ -->
 </body>
 </html>
