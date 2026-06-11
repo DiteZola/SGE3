@@ -30315,5 +30315,211 @@ console.log('  XLSX: com curso');
 <!-- ================================================
      FIM
      ================================================ -->
+<!-- ================================================
+     DISCIPLINAS — ORDEM NOS DOCUMENTOS
+     ================================================ -->
+<script>
+(function(){
+
+// =============================================
+// Buscar disciplinas na ordem guardada
+// =============================================
+S._getOrderedDiscs = async function(classe, turma){
+    var tid = S.tid();
+    var n = parseInt(classe);
+
+    // II Ciclo: buscar disciplinas da turma
+    if(n >= 10 && turma && tid){
+        var info = await S._getTurmaDiscs(tid, classe, turma);
+        if(info.discs && info.discs.length > 0) return info;
+    }
+
+    // Buscar ordem personalizada da escola
+    if(tid){
+        try {
+            var orderDoc = await db.collection('schools').doc(tid).collection('discOrder').doc(classe).get();
+            if(orderDoc.exists && orderDoc.data().order && orderDoc.data().order.length > 0){
+                return {discs: orderDoc.data().order, cats: orderDoc.data().categories || {}};
+            }
+        } catch(e){}
+    }
+
+    // Usar S.DISC padrão
+    return {discs: S.DISC[classe] || [], cats: S._discCategories ? S._discCategories[classe] || {} : {}};
+};
+
+// =============================================
+// Para certificados: ordem da classe mais alta
+// =============================================
+S._getCertDiscsOrdered = async function(certClasses, turma){
+    var tid = S.tid();
+    var allDiscs = [];
+    var discSet = {};
+    var allCats = {};
+
+    // Priorizar a classe mais alta (última da lista)
+    // Buscar a ordem da classe mais alta primeiro
+    var highestClass = certClasses[certClasses.length - 1];
+    var highestInfo = await S._getOrderedDiscs(highestClass, turma);
+
+    // Adicionar disciplinas da classe mais alta primeiro (define a ordem base)
+    for(var h = 0; h < highestInfo.discs.length; h++){
+        var d = highestInfo.discs[h];
+        if(!discSet[d]){
+            discSet[d] = true;
+            allDiscs.push(d);
+            if(highestInfo.cats[d]) allCats[d] = highestInfo.cats[d];
+        }
+    }
+
+    // Depois adicionar disciplinas das classes inferiores que não existem
+    for(var ci = 0; ci < certClasses.length - 1; ci++){
+        var clInfo = await S._getOrderedDiscs(certClasses[ci], turma);
+        for(var di = 0; di < clInfo.discs.length; di++){
+            var disc = clInfo.discs[di];
+            if(!discSet[disc]){
+                discSet[disc] = true;
+                allDiscs.push(disc);
+                if(clInfo.cats[disc]) allCats[disc] = clInfo.cats[disc];
+            }
+        }
+    }
+
+    return {discs: allDiscs, cats: allCats};
+};
+
+// =============================================
+// CERTIFICADO — Usar ordem correcta
+// =============================================
+var _prevCertBuild = S.CERT_buildPDF;
+S.CERT_buildPDF = async function(students, esc, certNum, yrVal){
+    var tid = S.tid();
+
+    // Para cada aluno, carregar disciplinas na ordem correcta
+    for(var i = 0; i < students.length; i++){
+        var s = students[i];
+
+        var certClasses = [];
+        if(certNum <= 6) certClasses = ['1ª Classe','2ª Classe','3ª Classe','4ª Classe','5ª Classe','6ª Classe'];
+        else if(certNum <= 9) certClasses = ['7ª Classe','8ª Classe','9ª Classe'];
+        else if(certNum <= 12) certClasses = ['10ª Classe','11ª Classe','12ª Classe'];
+        else certClasses = ['10ª Classe','11ª Classe','12ª Classe','13ª Classe'];
+
+        // Buscar ordem correcta
+        var orderedInfo = await S._getCertDiscsOrdered(certClasses, s.turma);
+
+        // Actualizar S.DISC para cada classe com a ordem correcta
+        for(var ci = 0; ci < certClasses.length; ci++){
+            var cl = certClasses[ci];
+            var clInfo = await S._getOrderedDiscs(cl, s.turma);
+            S.DISC[cl] = clInfo.discs;
+            if(clInfo.cats && Object.keys(clInfo.cats).length > 0){
+                if(!S._discCategories) S._discCategories = {};
+                S._discCategories[cl] = clInfo.cats;
+            }
+        }
+    }
+
+    await _prevCertBuild.call(this, students, esc, certNum, yrVal);
+};
+
+// =============================================
+// DECLARAÇÃO — Usar ordem correcta
+// =============================================
+var _prevDeclBuild = S._genDeclaracoesLote;
+if(typeof _prevDeclBuild === 'function'){
+    S._genDeclaracoesLote = async function(students, esc){
+        for(var i = 0; i < students.length; i++){
+            var s = students[i];
+            var clInfo = await S._getOrderedDiscs(s.classe, s.turma);
+            if(clInfo.discs.length > 0) S.DISC[s.classe] = clInfo.discs;
+        }
+        await _prevDeclBuild.call(this, students, esc);
+    };
+}
+
+// =============================================
+// PAUTAS — Usar ordem correcta
+// =============================================
+var _prevGrLoad = S._gdLoadPauta;
+if(typeof _prevGrLoad === 'function'){
+    S._gdLoadPauta = async function(){
+        var cl = (document.getElementById('gd_cl')||{}).value;
+        var tm = (document.getElementById('gd_tm')||{}).value;
+        if(cl && tm){
+            var clInfo = await S._getOrderedDiscs(cl, tm);
+            if(clInfo.discs.length > 0) S.DISC[cl] = clInfo.discs;
+        }
+        await _prevGrLoad.call(this);
+    };
+}
+
+// Professor
+var _prevGpLoad = S._gpLoad;
+if(typeof _prevGpLoad === 'function'){
+    S._gpLoad = async function(){
+        var cl = (document.getElementById('gp_cl')||{}).value;
+        var tm = (document.getElementById('gp_tm')||{}).value;
+        if(cl && tm){
+            var clInfo = await S._getOrderedDiscs(cl, tm);
+            if(clInfo.discs.length > 0) S.DISC[cl] = clInfo.discs;
+        }
+        await _prevGpLoad.call(this);
+    };
+}
+
+// =============================================
+// BOLETINS — Usar ordem correcta
+// =============================================
+var _prevBolPDF = S._genBoletimPDF;
+if(typeof _prevBolPDF === 'function'){
+    S._genBoletimPDF = async function(sid, s, esc){
+        var clInfo = await S._getOrderedDiscs(s.classe, s.turma);
+        if(clInfo.discs.length > 0) S.DISC[s.classe] = clInfo.discs;
+        await _prevBolPDF.call(this, sid, s, esc);
+    };
+}
+
+// Lote
+var _prevBolLote = S._genBoletinsLote;
+if(typeof _prevBolLote === 'function'){
+    S._genBoletinsLote = async function(students, esc){
+        for(var i = 0; i < students.length; i++){
+            var s = students[i];
+            var clInfo = await S._getOrderedDiscs(s.classe, s.turma);
+            if(clInfo.discs.length > 0) S.DISC[s.classe] = clInfo.discs;
+        }
+        await _prevBolLote.call(this, students, esc);
+    };
+}
+
+// =============================================
+// HISTÓRICO — Usar ordem
+// =============================================
+var _prevHistDiscs = S._ldHiDsc;
+if(typeof _prevHistDiscs === 'function'){
+    S._ldHiDsc = async function(sid){
+        var cl = (document.getElementById('hi_cl')||document.getElementById('hist_classe')||{}).value;
+        if(cl){
+            var clInfo = await S._getOrderedDiscs(cl, '');
+            if(clInfo.discs.length > 0) S.DISC[cl] = clInfo.discs;
+        }
+        await _prevHistDiscs.call(this, sid);
+    };
+}
+
+console.log('ORDEM DISCIPLINAS NOS DOCUMENTOS:');
+console.log('  Certificado: ordem da classe mais alta');
+console.log('  Declaracao: ordem da classe do aluno');
+console.log('  Pautas: ordem da classe seleccionada');
+console.log('  Boletins: ordem da classe do aluno');
+console.log('  Historico: ordem da classe seleccionada');
+console.log('  II Ciclo: disciplinas da turma+curso');
+
+})();
+</script>
+<!-- ================================================
+     FIM
+     ================================================ -->
 </body>
 </html>
