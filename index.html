@@ -23778,5 +23778,538 @@ SGE.renderPage = function(pageId) {
 
 console.log('[FIX-v8] ✅ Documentos corrigidos - SEM índice');
 </script>
+<script>
+// =====================================================
+// SGE-NG - FIX v9: Verificação Admin + Login Seguro
+// =====================================================
+
+console.log('[FIX-v9] Aplicando correção de verificação admin...');
+
+SGE.init = async function() {
+    try {
+        SGE.updateLoadingText('A inicializar...');
+
+        if (!firebase.apps.length) firebase.initializeApp(SGE.firebaseConfig);
+        SGE.db = firebase.firestore();
+        SGE.auth = firebase.auth();
+
+        try { await SGE.db.enablePersistence({ synchronizeTabs: true }); } catch(e) {}
+        try { await SGE.initIndexedDB(); } catch(e) {}
+
+        SGE.applyTheme();
+        SGE.monitorConnection();
+        SGE.populateProvincias();
+
+        SGE.updateLoadingText('A verificar sistema...');
+
+        // ========== LÓGICA PRINCIPAL ==========
+
+        // 1. Se está OFFLINE → sempre login
+        if (!navigator.onLine) {
+            console.log('[FIX-v9] Offline → Login');
+            SGE.hideLoading();
+            SGE.showPage('login');
+            SGE._setupAuthListener();
+            return;
+        }
+
+        // 2. Se está ONLINE → verificar admin
+        let adminExiste = false;
+
+        try {
+            adminExiste = await Promise.race([
+                SGE._verificarAdminExiste(),
+                new Promise(resolve => setTimeout(() => resolve(true), 10000)) // timeout = assumir que existe
+            ]);
+        } catch(e) {
+            console.warn('[FIX-v9] Erro na verificação:', e.message);
+            adminExiste = true; // na dúvida, mostrar login
+        }
+
+        console.log('[FIX-v9] Admin existe:', adminExiste);
+
+        // 3. Verificar se o utilizador JÁ está logado
+        const currentUser = SGE.auth.currentUser;
+
+        if (currentUser) {
+            // Já está autenticado → ir directo para o app
+            console.log('[FIX-v9] Já autenticado:', currentUser.uid);
+            SGE.hideLoading();
+            try {
+                await SGE._processLogin(currentUser);
+            } catch(e) {
+                console.error('[FIX-v9] Erro ao processar login:', e);
+                SGE.showPage('login');
+            }
+            SGE._setupAuthListener();
+            return;
+        }
+
+        // 4. Não está logado
+        SGE.hideLoading();
+
+        if (!adminExiste) {
+            // Não existe admin E está online → mostrar cadastro
+            console.log('[FIX-v9] Sem admin → Setup');
+            SGE.showPage('setup');
+        } else {
+            // Admin existe → mostrar login
+            console.log('[FIX-v9] Admin existe → Login');
+            SGE.showPage('login');
+        }
+
+        SGE._setupAuthListener();
+
+    } catch(error) {
+        console.error('[FIX-v9] Erro fatal:', error);
+        try { SGE.hideLoading(); } catch(e) {}
+        SGE.showPage('login');
+    }
+};
+
+// ========== VERIFICAÇÃO ROBUSTA DE ADMIN ==========
+
+SGE._verificarAdminExiste = async function() {
+    // Método 1: documento sistema/admin_geral
+    try {
+        const sysDoc = await SGE.db.collection('sistema').doc('admin_geral').get();
+        if (sysDoc.exists && sysDoc.data()?.uid) {
+            // Guardar no cache local
+            try { await SGE.idbPut('cache', { id: 'admin_exists', exists: true, checkedAt: Date.now() }); } catch(e) {}
+            return true;
+        }
+    } catch(e) {
+        console.warn('[FIX-v9] Método 1 falhou:', e.message);
+    }
+
+    // Método 2: procurar na coleção utilizadores
+    try {
+        const snap = await SGE.db.collection('utilizadores').where('perfil', '==', 'admin_geral').limit(1).get();
+        if (!snap.empty) {
+            // Corrigir: criar documento sistema se não existe
+            try {
+                const adminData = snap.docs[0].data();
+                await SGE.db.collection('sistema').doc('admin_geral').set({
+                    uid: snap.docs[0].id,
+                    email: adminData.email,
+                    criadoEm: adminData.criadoEm || new Date().toISOString()
+                });
+            } catch(e) {}
+
+            try { await SGE.idbPut('cache', { id: 'admin_exists', exists: true, checkedAt: Date.now() }); } catch(e) {}
+            return true;
+        }
+    } catch(e) {
+        console.warn('[FIX-v9] Método 2 falhou:', e.message);
+
+        // Método 2b: sem where (caso índice não exista)
+        try {
+            const allUsers = await SGE.db.collection('utilizadores').get();
+            let found = false;
+            allUsers.forEach(doc => {
+                if (doc.data().perfil === 'admin_geral') found = true;
+            });
+            if (found) {
+                try { await SGE.idbPut('cache', { id: 'admin_exists', exists: true, checkedAt: Date.now() }); } catch(e) {}
+                return true;
+            }
+        } catch(e2) {
+            console.warn('[FIX-v9] Método 2b falhou:', e2.message);
+        }
+    }
+
+    // Método 3: verificar cache local
+    try {
+        const cached = await SGE.idbGet('cache', 'admin_exists');
+        if (cached?.exists) {
+            console.log('[FIX-v9] Admin existe (cache)');
+            return true;
+        }
+    } catch(e) {}
+
+    // Nenhum admin encontrado
+    return false;
+};
+
+// ========== AUTH LISTENER (separado do init) ==========
+
+SGE._authListenerActive = false;
+
+SGE._setupAuthListener = function() {
+    if (SGE._authListenerActive) return;
+    SGE._authListenerActive = true;
+
+    SGE.auth.onAuthStateChanged(async (user) => {
+        if (!user) {
+            // Deslogou
+            if (SGE.state.userData) {
+                console.log('[FIX-v9] Utilizador deslogou');
+                SGE.state.user = null;
+                SGE.state.userData = null;
+                SGE.state.currentSchool = null;
+                SGE.state.currentSchoolData = null;
+                SGE.state.currentAnoLetivo = null;
+                SGE.showPage('login');
+            }
+            return;
+        }
+
+        // Logou - mas só processar se não foi já processado
+        if (SGE.state.userData && SGE.state.user?.uid === user.uid) {
+            return; // Já processado
+        }
+
+        console.log('[FIX-v9] Auth state: novo login', user.uid);
+        try {
+            await SGE._processLogin(user);
+        } catch(e) {
+            console.error('[FIX-v9] Erro processLogin via listener:', e);
+        }
+    });
+};
+
+// ========== PROCESS LOGIN ROBUSTO ==========
+
+SGE._processLogin = async function(user) {
+    console.log('[FIX-v9] A processar login:', user.uid);
+    SGE.state.user = user;
+
+    // Tentar carregar dados com retry
+    let userData = null;
+
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+        try {
+            const doc = await SGE.db.collection('utilizadores').doc(user.uid).get();
+            if (doc.exists) {
+                userData = doc.data();
+                console.log('[FIX-v9] Dados OK (tentativa ' + tentativa + '):', userData.nome);
+                break;
+            } else {
+                console.warn('[FIX-v9] Doc não existe (tentativa ' + tentativa + ')');
+                if (tentativa < 3) await new Promise(r => setTimeout(r, 1000 * tentativa));
+            }
+        } catch(e) {
+            console.warn('[FIX-v9] Erro Firestore (tentativa ' + tentativa + '):', e.message);
+            if (tentativa < 3) await new Promise(r => setTimeout(r, 1000 * tentativa));
+        }
+    }
+
+    // Fallback: cache
+    if (!userData) {
+        try {
+            const cached = await SGE.idbGet('cache', 'currentUser');
+            if (cached?.uid === user.uid) {
+                userData = cached;
+                console.log('[FIX-v9] Dados do cache');
+                SGE.toast('A usar dados em cache', 'warning');
+            }
+        } catch(e) {}
+    }
+
+    if (!userData) {
+        SGE.toast('Dados não encontrados. Tente novamente.', 'error');
+        return;
+    }
+
+    if (userData.ativo === false) {
+        SGE.toast('Conta desativada', 'error');
+        await SGE.auth.signOut();
+        return;
+    }
+
+    SGE.state.userData = userData;
+
+    // Cache
+    try { await SGE.idbPut('cache', { id: 'currentUser', ...userData }); } catch(e) {}
+
+    // Marcar que admin existe
+    if (userData.perfil === 'admin_geral') {
+        try { await SGE.idbPut('cache', { id: 'admin_exists', exists: true, checkedAt: Date.now() }); } catch(e) {}
+    }
+
+    // Escola
+    if (userData.escolaId) {
+        try { await SGE.loadSchoolData(userData.escolaId); } catch(e) {}
+    }
+
+    // GARANTIR que o app container está visível ANTES de setupAppUI
+    document.getElementById('setup-page').style.display = 'none';
+    document.getElementById('login-page').style.display = 'none';
+    document.getElementById('app-container').style.display = 'block';
+
+    // Delay mínimo para DOM
+    await new Promise(r => setTimeout(r, 50));
+
+    SGE.setupAppUI();
+    SGE.navigate('dashboard');
+
+    // Background
+    SGE.db.collection('utilizadores').doc(user.uid).update({
+        ultimoLogin: new Date().toISOString()
+    }).catch(() => {});
+
+    console.log('[FIX-v9] Login completo ✓');
+};
+
+// ========== LOGIN ==========
+
+SGE.doLogin = async function() {
+    const email = (document.getElementById('login-email')?.value || '').trim();
+    const senha = document.getElementById('login-senha')?.value || '';
+
+    if (!email) return SGE.toast('Preencha o email', 'error');
+    if (!senha) return SGE.toast('Preencha a senha', 'error');
+
+    const btn = document.getElementById('login-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> A entrar...'; }
+
+    try {
+        // Limpar estado
+        SGE.state.user = null;
+        SGE.state.userData = null;
+        SGE.state.currentSchool = null;
+        SGE.state.currentSchoolData = null;
+        SGE.state.currentAnoLetivo = null;
+
+        const cred = await SGE.auth.signInWithEmailAndPassword(email, senha);
+
+        if (document.getElementById('login-remember')?.checked) {
+            localStorage.setItem('sge-email', email);
+        }
+
+        // Processar directamente (não esperar listener)
+        await SGE._processLogin(cred.user);
+
+    } catch(error) {
+        const msgs = {
+            'auth/user-not-found': 'Utilizador não encontrado',
+            'auth/wrong-password': 'Senha incorrecta',
+            'auth/invalid-email': 'Email inválido',
+            'auth/too-many-requests': 'Muitas tentativas. Aguarde.',
+            'auth/invalid-credential': 'Email ou senha incorrectos',
+            'auth/user-disabled': 'Conta desactivada',
+            'auth/network-request-failed': 'Sem internet'
+        };
+        SGE.toast(msgs[error.code] || error.message, 'error');
+    }
+
+    if (btn) { btn.disabled = false; btn.innerHTML = 'Entrar'; }
+};
+
+// ========== CRIAR ADMIN ==========
+
+SGE.createAdminGeral = async function() {
+    const btn = document.getElementById('setup-next-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> A criar...';
+
+    const nome = (document.getElementById('admin-nome')?.value || '').trim();
+    const sexo = document.getElementById('admin-sexo')?.value || '';
+    const bi = (document.getElementById('admin-bi')?.value || '').trim();
+    const telefone = (document.getElementById('admin-telefone')?.value || '').trim();
+    const provincia = document.getElementById('admin-provincia')?.value || '';
+    const email = (document.getElementById('admin-email')?.value || '').trim();
+    const senha = document.getElementById('admin-senha')?.value || '';
+    const securityCode = document.getElementById('admin-security-code')?.value || '';
+
+    if (!nome || nome.length < 3) { btn.disabled = false; btn.textContent = '✓ Criar Administrador'; return SGE.toast('Nome mín. 3 caracteres', 'error'); }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { btn.disabled = false; btn.textContent = '✓ Criar Administrador'; return SGE.toast('Email inválido', 'error'); }
+    if (senha.length < 6) { btn.disabled = false; btn.textContent = '✓ Criar Administrador'; return SGE.toast('Senha mín. 6 caracteres', 'error'); }
+    if (!navigator.onLine) { btn.disabled = false; btn.textContent = '✓ Criar Administrador'; return SGE.toast('Necessário internet', 'error'); }
+
+    try {
+        // Verificar novamente
+        const adminJaExiste = await SGE._verificarAdminExiste();
+        if (adminJaExiste) {
+            btn.disabled = false; btn.textContent = '✓ Criar Administrador';
+            SGE.toast('Já existe um Administrador!', 'error');
+            setTimeout(() => SGE.showPage('login'), 1500);
+            return;
+        }
+
+        // Criar no Auth
+        let cred;
+        try {
+            cred = await SGE.auth.createUserWithEmailAndPassword(email, senha);
+        } catch(authErr) {
+            btn.disabled = false; btn.textContent = '✓ Criar Administrador';
+            const m = {
+                'auth/email-already-in-use': 'Email já em uso',
+                'auth/weak-password': 'Senha fraca',
+                'auth/invalid-email': 'Email inválido',
+                'auth/operation-not-allowed': 'Active Email/Password no Firebase Console → Authentication → Sign-in method',
+                'auth/network-request-failed': 'Sem internet'
+            };
+            return SGE.toast(m[authErr.code] || authErr.message, 'error');
+        }
+
+        const uid = cred.user.uid;
+
+        // Foto
+        let foto = null;
+        if (SGE.state.pendingPhoto) {
+            try {
+                foto = SGE.state.pendingPhoto.length > 700000 ?
+                    await SGE._comprimirFotoV3(SGE.state.pendingPhoto) : SGE.state.pendingPhoto;
+            } catch(e) { foto = null; }
+        }
+
+        const agora = new Date().toISOString();
+        const dados = {
+            uid, nome, sexo, bi, telefone, provincia, email,
+            perfil: 'admin_geral',
+            codigoSeguranca: SGE.hashCode(securityCode || '0000'),
+            criadoEm: agora, atualizadoEm: agora, ativo: true
+        };
+        if (foto) dados.foto = foto;
+
+        // Salvar
+        try {
+            await SGE.db.collection('utilizadores').doc(uid).set(dados);
+        } catch(e1) {
+            delete dados.foto;
+            await SGE.db.collection('utilizadores').doc(uid).set(dados);
+        }
+
+        // Marcar no sistema
+        try {
+            await SGE.db.collection('sistema').doc('admin_geral').set({ uid, email, criadoEm: agora });
+        } catch(e) {}
+
+        // Cache
+        try { await SGE.idbPut('cache', { id: 'admin_exists', exists: true, checkedAt: Date.now() }); } catch(e) {}
+
+        // Auditoria
+        try {
+            await SGE.db.collection('auditoria').add({ acao: 'ADMIN_CRIADO', userId: uid, descricao: 'Admin: ' + nome, timestamp: agora });
+        } catch(e) {}
+
+        SGE.state.pendingPhoto = null;
+        SGE.toast('Administrador criado! 🎉', 'success');
+
+        // Entrar
+        setTimeout(async () => {
+            try { await SGE._processLogin(cred.user); }
+            catch(e) { SGE.showPage('login'); SGE.toast('Faça login', 'info'); }
+        }, 1000);
+
+    } catch(err) {
+        console.error('[FIX-v9] Erro:', err);
+        btn.disabled = false; btn.textContent = '✓ Criar Administrador';
+        SGE.toast('Erro: ' + err.message, 'error');
+    }
+};
+
+// ========== SETUP STEPS ==========
+
+SGE.setupNext = function() {
+    const s = SGE.state.setupStep;
+    if (s === 1) {
+        if (!(document.getElementById('admin-nome')?.value || '').trim()) return SGE.toast('Preencha o nome', 'error');
+        if (!document.getElementById('admin-sexo')?.value) return SGE.toast('Selecione o sexo', 'error');
+        if (!(document.getElementById('admin-telefone')?.value || '').trim()) return SGE.toast('Preencha o telefone', 'error');
+        SGE.state.setupStep = 2; SGE.updateSetupUI();
+    } else if (s === 2) {
+        const em = (document.getElementById('admin-email')?.value || '').trim();
+        const pw = document.getElementById('admin-senha')?.value || '';
+        if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return SGE.toast('Email inválido', 'error');
+        if (pw.length < 6) return SGE.toast('Senha mín. 6 caracteres', 'error');
+        if (pw !== (document.getElementById('admin-senha-confirm')?.value || '')) return SGE.toast('Senhas não coincidem', 'error');
+        if ((document.getElementById('admin-security-code')?.value || '').length < 4) return SGE.toast('Código mín. 4 caracteres', 'error');
+        SGE.prepareSetupConfirmation(); SGE.state.setupStep = 3; SGE.updateSetupUI();
+    } else if (s === 3) { SGE.createAdminGeral(); }
+};
+
+// ========== SHOW PAGE SEGURO ==========
+
+SGE.showPage = function(page) {
+    try {
+        const setup = document.getElementById('setup-page');
+        const login = document.getElementById('login-page');
+        const app = document.getElementById('app-container');
+
+        if (setup) setup.style.display = 'none';
+        if (login) login.style.display = 'none';
+        if (app) app.style.display = 'none';
+
+        switch(page) {
+            case 'setup': if (setup) setup.style.display = 'block'; break;
+            case 'login': if (login) login.style.display = 'block'; break;
+            case 'app': if (app) app.style.display = 'block'; break;
+        }
+    } catch(e) { console.error('showPage:', e); }
+};
+
+// ========== LOADING SEGURO ==========
+
+SGE.updateLoadingText = function(text) {
+    try { const el = document.getElementById('loading-text'); if (el) el.textContent = text; } catch(e) {}
+};
+
+SGE.hideLoading = function() {
+    try {
+        const el = document.getElementById('loading-screen');
+        if (el) { el.classList.add('hide'); setTimeout(() => { if (el) el.style.display = 'none'; }, 500); }
+    } catch(e) {}
+};
+
+// ========== LOGOUT ==========
+
+SGE.doLogout = function() {
+    SGE.confirm('Tem certeza que deseja sair?', async () => {
+        try {
+            await SGE.auth.signOut();
+            SGE.state.user = null;
+            SGE.state.userData = null;
+            SGE.state.currentSchool = null;
+            SGE.state.currentSchoolData = null;
+            SGE.state.currentAnoLetivo = null;
+            SGE.showPage('login');
+            SGE.toast('Sessão terminada', 'info');
+        } catch(e) {
+            SGE.showPage('login');
+        }
+    });
+};
+
+// ========== DIAGNÓSTICO ==========
+
+window.SGE_DIAG = async function() {
+    console.log('======= DIAGNÓSTICO v9 =======');
+    console.log('Online:', navigator.onLine);
+    console.log('Auth UID:', SGE.auth?.currentUser?.uid || 'NÃO');
+    console.log('UserData:', SGE.state.userData?.nome || 'NÃO');
+    console.log('Perfil:', SGE.state.userData?.perfil || 'N/A');
+    console.log('Escola:', SGE.state.currentSchoolData?.nome || 'N/A');
+
+    // Verificar admin
+    if (navigator.onLine) {
+        const existe = await SGE._verificarAdminExiste();
+        console.log('Admin existe:', existe ? '✅ SIM' : '❌ NÃO');
+    }
+
+    // Testar escrita
+    try {
+        await SGE.db.collection('sistema').doc('_test_').set({ t: Date.now() });
+        await SGE.db.collection('sistema').doc('_test_').delete();
+        console.log('Firestore: ✅ OK');
+    } catch(e) { console.error('Firestore: ❌', e.message); }
+
+    // Cache admin
+    try {
+        const c = await SGE.idbGet('cache', 'admin_exists');
+        console.log('Cache admin:', c?.exists ? 'SIM' : 'NÃO');
+    } catch(e) {}
+
+    console.log('===============================');
+};
+
+console.log('[FIX-v9] ✅ Verificação admin corrigida');
+console.log('[FIX-v9] Fluxo:');
+console.log('  OFFLINE → sempre Login');
+console.log('  ONLINE + sem admin → Setup (cadastro)');
+console.log('  ONLINE + admin existe → Login');
+console.log('  Já autenticado → App directo');
+</script>
 </body>
 </html>
